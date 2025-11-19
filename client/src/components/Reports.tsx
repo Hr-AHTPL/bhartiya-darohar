@@ -30,6 +30,7 @@ import { toast } from "sonner";
 import PatientDialog from "@/components/PatientDialog";
 import TherapyDialog from "@/components/TherapyDialog";
 import SpecialtyDialog from "@/components/SpecialtyDialog";
+import API_BASE_URL from "@/config/api.config";
 
 const specialties = [
   "Orthopaedic",
@@ -207,7 +208,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
       });
 
       const response = await fetch(
-        `https://bhartiyadharohar.in/api/website/enquiry/patient-wise-report?${queryParams}`,
+        `${API_BASE_URL}/api/website/enquiry/patient-wise-report?${queryParams}`,
         {
           method: "GET",
         }
@@ -244,7 +245,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
       });
 
       const response = await fetch(
-        `https://bhartiyadharohar.in/api/website/enquiry/therapy-analysis?${queryParams}`,
+        `${API_BASE_URL}/api/website/enquiry/therapy-analysis?${queryParams}`,
         { method: "GET" }
       );
 
@@ -282,7 +283,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
       });
 
       const response = await fetch(
-        `https://bhartiyadharohar.in/api/website/enquiry/disease-analysis?${queryParams}`,
+        `${API_BASE_URL}/api/website/enquiry/disease-analysis?${queryParams}`,
         {
           method: "GET",
         }
@@ -347,7 +348,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
     if (type === "Patient Master") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/patient-master?${queryParams}`,
+          `${API_BASE_URL}/api/website/enquiry/patient-master?${queryParams}`,
           {
             method: "GET",
           }
@@ -372,7 +373,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
     } else if (type === "Patient Summary") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/patient-billing-master?${queryParams}`,
+          `${API_BASE_URL}/api/website/enquiry/patient-billing-master?${queryParams}`,
           {
             method: "GET",
           }
@@ -397,7 +398,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
     } else if (type === "Revenue Report") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/revenue-report?${queryParams}`,
+          `${API_BASE_URL}/api/website/enquiry/revenue-report?${queryParams}`,
           {
             method: "GET",
           }
@@ -422,7 +423,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
     } else if (type === "Running Stock") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/current-stock`,
+          `${API_BASE_URL}/api/website/enquiry/current-stock`,
           {
             method: "GET",
           }
@@ -448,7 +449,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
     } else if (type === "Low Stock") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/low-stock`,
+          `${API_BASE_URL}/api/website/enquiry/low-stock`,
           {
             method: "GET",
           }
@@ -473,7 +474,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
     } else if (type === "Prakriti Parikshan") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/prakriti-analysis?${queryParams}`,
+          `${API_BASE_URL}/api/website/enquiry/prakriti-analysis?${queryParams}`,
           {
             method: "GET",
           }
@@ -499,7 +500,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
     } else if (type === "Consultation") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/consultation-analysis?${queryParams}`,
+          `${API_BASE_URL}/api/website/enquiry/consultation-analysis?${queryParams}`,
           {
             method: "GET",
           }
@@ -527,7 +528,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
       if (stockType == "Running Stock") {
         try {
           const response = await fetch(
-            `https://bhartiyadharohar.in/api/website/enquiry/current-stock`,
+            `${API_BASE_URL}/api/website/enquiry/current-stock`,
             {
               method: "GET",
             }
@@ -553,7 +554,7 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
       } else if (stockType == "Low Stock") {
         try {
           const response = await fetch(
-            `https://bhartiyadharohar.in/api/website/enquiry/low-stock`,
+            `${API_BASE_URL}/api/website/enquiry/low-stock`,
             {
               method: "GET",
             }
@@ -605,7 +606,7 @@ else if (type === "Purchase Records") {
     toast.info("Generating purchase report...");
 
     const response = await fetch(
-      `https://bhartiyadharohar.in/api/purchase/report?${purchaseParams}`,
+      `${API_BASE_URL}/api/purchase/report?${purchaseParams}`,
       {
         method: "GET",
       }
@@ -696,7 +697,7 @@ else if (type === "Sales Records") {
     toast.info("Generating sales report...");
 
     const response = await fetch(
-      `https://bhartiyadharohar.in/api/sales/report?${salesParams}`,
+      `${API_BASE_URL}/api/sales/report?${salesParams}`,
       {
         method: "GET",
       }
@@ -765,7 +766,7 @@ else if (type === "Sales Records") {
       );
 
       fetch(
-        `https://bhartiyadharohar.in/api/website/enquiry/discount-report?${queryParams}`,
+        `${API_BASE_URL}/api/website/enquiry/discount-report?${queryParams}`,
         {
           method: "GET",
         }
@@ -792,7 +793,7 @@ else if (type === "Sales Records") {
     } else if (type === "Balance Report") {
       toast.info("Generating balance report...");
       fetch(
-        `https://bhartiyadharohar.in/api/website/enquiry/balance-report?${queryParams}`
+        `${API_BASE_URL}/api/website/enquiry/balance-report?${queryParams}`
       )
         .then((res) => res.blob())
         .then((blob) => {
@@ -809,7 +810,7 @@ else if (type === "Sales Records") {
 
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/sponsor-report?${queryParams}`
+          `${API_BASE_URL}/api/website/enquiry/sponsor-report?${queryParams}`
         );
 
         if (!response.ok) throw new Error("Failed to fetch Sponsor Report");

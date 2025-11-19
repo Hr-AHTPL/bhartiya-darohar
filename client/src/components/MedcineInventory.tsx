@@ -41,6 +41,7 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import PurchaseForm from "./PurchaseForm";
+import API_BASE_URL from "@/config/api.config";
 
 interface Medicine {
   id: string;
@@ -85,7 +86,7 @@ const MedicineInventory = () => {
   useEffect(() => {
     const fetchSales = async () => {
       try {
-        const response = await fetch("https://bhartiyadharohar.in/api/sale/view");
+        const response = await fetch(`${API_BASE_URL}/api/sale/view`);
         const data = await response.json();
         if (data.success) {
           setSales(data.sales);
@@ -105,7 +106,7 @@ useEffect(() => {
   const fetchPurchases = async () => {
     try {
       console.log("📄 Fetching purchases from API...");
-      const response = await fetch("https://bhartiyadharohar.in/api/purchase/view");
+      const response = await fetch(`${API_BASE_URL}/api/purchase/view`);
       
       console.log("📡 Response status:", response.status);
       
@@ -210,7 +211,7 @@ const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
     try {
       if (!query.trim()) return setSuggestions([]);
 
-      const res = await axios.get("https://bhartiyadharohar.in/medicine/view");
+      const res = await axios.get(`${API_BASE_URL}/medicine/view`);
       if (res.data.status === 1) {
         const filtered = res.data.medicineList.filter((med) =>
           med["Product Name"].toLowerCase().includes(query.toLowerCase())
@@ -283,7 +284,7 @@ const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
       try {
         setLoading(true);
         console.log("Fetching medicines from API...");
-        const response = await axios.get("https://bhartiyadharohar.in/medicine/view");
+        const response = await axios.get(`${API_BASE_URL}/medicine/view`);
         console.log("API Response:", response.data);
 
         let medicineData = [];
@@ -341,7 +342,7 @@ const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
   useEffect(() => {
     const fetchSalesSummary = async () => {
       try {
-        const res = await axios.get("https://bhartiyadharohar.in/api/sale/view");
+        const res = await axios.get(`${API_BASE_URL}/api/sale/view`);
         const salesData = res.data.sales;
 
         const today = new Date().toISOString().split("T")[0]; // yyyy-mm-dd
@@ -386,7 +387,7 @@ const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
     try {
       const currentYear = new Date().getFullYear();
       const response = await axios.get(
-        `https://bhartiyadharohar.in/api/closing-stock/current?year=${currentYear}`
+        `${API_BASE_URL}/api/closing-stock/current?year=${currentYear}`
       );
       
       if (response.data.success) {
@@ -423,7 +424,7 @@ const handleUpdateClosingStock = async () => {
     });
 
     const response = await axios.put(
-      "https://bhartiyadharohar.in/api/closing-stock/update",
+      `${API_BASE_URL}/api/closing-stock/update`,
       {
         year: closingStockYear,
         closingStock: parseInt(editClosingStockValue),
@@ -466,7 +467,7 @@ const handleUpdateClosingStock = async () => {
 
       try {
         const res = await axios.post(
-          "https://bhartiyadharohar.in/medicine/insert",
+          `${API_BASE_URL}/medicine/insert`,
           medicine
         );
         if (res.data.status === 1) {
@@ -498,7 +499,7 @@ const handleUpdateClosingStock = async () => {
 
       try {
         const response = await axios.put(
-          `https://bhartiyadharohar.in/medicine/update/${newMedicine.code}`,
+          `${API_BASE_URL}/medicine/update/${newMedicine.code}`,
           updatedMedicine
         );
 
@@ -549,7 +550,7 @@ const handleUpdateClosingStock = async () => {
   const handleDeleteMedicine = async (Code: string) => {
     try {
       const res = await axios.delete(
-        `https://bhartiyadharohar.in/medicine/delete/${Code}`
+        `${API_BASE_URL}/medicine/delete/${Code}`
       );
       if (res.data.status === 1) {
         setMedicines((prev) => prev.filter((med) => med.Code !== Code));
@@ -588,7 +589,7 @@ const handleUpdateClosingStock = async () => {
     }
 
     try {
-      const res = await fetch("https://bhartiyadharohar.in/medicine/view");
+      const res = await fetch(`${API_BASE_URL}/medicine/view`);
       const data = await res.json();
 
       if (!data || !Array.isArray(data.medicineList)) {
@@ -685,7 +686,7 @@ const handleUpdateClosingStock = async () => {
     const fetchEnquiries = async () => {
       try {
         const response = await axios.get(
-          "https://bhartiyadharohar.in/api/website/enquiry/view"
+          `${API_BASE_URL}/api/website/enquiry/view`
         );
         if (Array.isArray(response.data.enquiryList)) {
           setEnquiryList(response.data.enquiryList);
@@ -974,11 +975,11 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
 
     try {
       const response = await axios.post(
-        "https://bhartiyadharohar.in/api/sale/record",
+        `${API_BASE_URL}/api/sale/record`,
         sale
       );
       const updatedSales = await axios.get(
-        "https://bhartiyadharohar.in/api/sale/view"
+        `${API_BASE_URL}/api/sale/view`
       );
       setSales(updatedSales.data.sales);
       await generateExcelReceipt(sale);

@@ -7,6 +7,7 @@ import { FileText, Download, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver"; 
+import API_BASE_URL from "@/config/api.config";
 interface ReportGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
@@ -42,7 +43,7 @@ const ReportGenerator = ({ isOpen, onClose }: ReportGeneratorProps) => {
     });
     if (formData.reportType === "medicine-stock") {
   try {
-    const response = await fetch("https://bhartiyadharohar.in/medicine/view");
+    const response = await fetch(`${API_BASE_URL}/medicine/view`);
     const data = await response.json();
 
     if (data && Array.isArray(data.medicineList)) {
@@ -123,7 +124,7 @@ const ReportGenerator = ({ isOpen, onClose }: ReportGeneratorProps) => {
  else if (formData.reportType === "patient-master") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/patient-master?${queryParams}`,
+          `${API_BASE_URL}/api/website/enquiry/patient-master?${queryParams}`,
           {
             method: "GET",
           }
@@ -158,7 +159,7 @@ const ReportGenerator = ({ isOpen, onClose }: ReportGeneratorProps) => {
     } else if (formData.reportType === "patient-summary") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/patient-billing-master?${queryParams}`,
+          `${API_BASE_URL}/api/website/enquiry/patient-billing-master?${queryParams}`,
           {
             method: "GET",
           }
@@ -193,7 +194,7 @@ const ReportGenerator = ({ isOpen, onClose }: ReportGeneratorProps) => {
     } else if (formData.reportType === "revenue") {
       try {
         const response = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/revenue-report?${queryParams}`,
+          `${API_BASE_URL}/api/website/enquiry/revenue-report?${queryParams}`,
           {
             method: "GET",
           }

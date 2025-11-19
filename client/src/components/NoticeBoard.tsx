@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Trash2, Bell, Plus } from "lucide-react";
+import API_BASE_URL from "@/config/api.config";
 
 type Notice = {
   _id: string;
@@ -19,7 +20,7 @@ const NoticeBoard = () => {
   const [formData, setFormData] = useState({ title: "", description: "" });
 
   const getAllNotices = () => {
-    axios.get("https://bhartiyadharohar.in/api/website/notice/view").then((res) => {
+    axios.get(`${API_BASE_URL}/api/website/notice/view`).then((res) => {
       if (res.data.status === 1) {
         setNoticeList(res.data.noticeList);
       }
@@ -29,7 +30,7 @@ const NoticeBoard = () => {
   const saveNotice = (e: React.FormEvent) => {
     e.preventDefault();
     axios
-      .post("https://bhartiyadharohar.in/api/website/notice/insert", formData)
+      .post(`${API_BASE_URL}/api/website/notice/insert`, formData)
       .then((res) => {
         if (res.data.status === 1) {
           getAllNotices();
@@ -40,7 +41,7 @@ const NoticeBoard = () => {
 
   const deleteNotice = (id: string) => {
     axios
-      .delete(`https://bhartiyadharohar.in/api/website/notice/delete/${id}`)
+      .delete(`${API_BASE_URL}/api/website/notice/delete/${id}`)
       .then((res) => {
         if (res.data.status === 1) getAllNotices();
       });

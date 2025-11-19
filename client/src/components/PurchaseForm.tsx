@@ -8,6 +8,7 @@ import { Plus, Minus, FileText, ShoppingCart } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import API_BASE_URL from "@/config/api.config";
 
 interface Medicine {
   id: string;
@@ -122,7 +123,7 @@ const PurchaseForm = () => {
   useEffect(() => {
     const fetchMedicines = async () => {
       try {
-        const response = await fetch('https://bhartiyadharohar.in/medicine/view');
+        const response = await fetch(`${API_BASE_URL}/medicine/view`);
         const data = await response.json();
         if (data.status === 1 && data.medicineList) {
           setMedicineOptions(data.medicineList);
@@ -304,7 +305,7 @@ const PurchaseForm = () => {
         grandTotal: invoice.grandTotal,
       };
 
-      await fetch('https://bhartiyadharohar.in/api/purchase/record', {
+      await fetch(`${API_BASE_URL}/api/purchase/record`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestData),

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import React, { useState } from 'react'
 import { handleError, handleSuccess } from '@/utils';
 import { Heart, Lock, Mail, User, Sparkles } from 'lucide-react';
+import API_BASE_URL from "@/config/api.config";
 
 function Signup() {
     const [signupInfo, setSignupInfo] = useState({
@@ -26,7 +27,7 @@ function Signup() {
             return handleError('Name, Email & Password are required')
         }
         try {
-            const url = "https://bhartiyadharohar.in/auth/signup";
+            const url = `${API_BASE_URL}/auth/signup`;
             const response = await fetch(url, {
                 method: "POST",
                 headers: {

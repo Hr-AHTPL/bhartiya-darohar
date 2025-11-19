@@ -49,6 +49,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import PatientEditDialog from "./PatientEditDialog";
 import { Edit } from "lucide-react";
+import API_BASE_URL from "@/config/api.config";
 
 interface Patient {
   id: string;
@@ -648,7 +649,7 @@ const calculateTotalTherapyAmount = () => {
     const fetchPatients = async () => {
       try {
         const response = await fetch(
-          "https://bhartiyadharohar.in/api/website/enquiry/view"
+          `${API_BASE_URL}/api/website/enquiry/view`
         );
         const data = await response.json();
         if (data.enquiryList) {
@@ -747,7 +748,7 @@ const calculateTotalTherapyAmount = () => {
   const handleGeneratePrescription = async (patient: Patient) => {
     try {
       const response = await axios.get(
-        `https://bhartiyadharohar.in/api/website/enquiry/prescription/${patient.id}`,
+        `${API_BASE_URL}/api/website/enquiry/prescription/${patient.id}`,
         { responseType: "blob" }
       );
 
@@ -810,7 +811,7 @@ const calculateTotalTherapyAmount = () => {
     if (reappointmentSponsor.trim()) visitPayload.sponsor = reappointmentSponsor;
 
     const response = await fetch(
-      "https://bhartiyadharohar.in/api/website/enquiry/addvisit",
+      `${API_BASE_URL}/api/website/enquiry/addvisit`,
       {
         method: "POST",
         headers: {
@@ -878,7 +879,7 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
 
     // Make API call to update patient
     const response = await axios.patch(
-      `https://bhartiyadharohar.in/api/website/enquiry/update/${selectedPatientForEdit.id}`,
+      `${API_BASE_URL}/api/website/enquiry/update/${selectedPatientForEdit.id}`,
       payload
     );
 
@@ -887,7 +888,7 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
       
       // Refresh the patient list
       const refreshResponse = await fetch(
-        "https://bhartiyadharohar.in/api/website/enquiry/view"
+        `${API_BASE_URL}/api/website/enquiry/view`
       );
       const data = await refreshResponse.json();
       if (data.enquiryList) {
@@ -989,7 +990,7 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
     ).join(', ');
 
     const response = await axios.get(
-      `https://bhartiyadharohar.in/api/website/enquiry/prakriti-registration/${selectedPatient.id}`,
+      `${API_BASE_URL}/api/website/enquiry/prakriti-registration/${selectedPatient.id}`,
       {
         responseType: "blob",
         params: {

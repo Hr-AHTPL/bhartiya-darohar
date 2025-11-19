@@ -28,6 +28,7 @@ import {
   Star,
 } from "lucide-react";
 import axios from "axios";
+import API_BASE_URL from "@/config/api.config";
 
 interface PatientData {
   firstName: string;
@@ -185,7 +186,7 @@ const PatientForm = () => {
       const submitData = rawData;
 
       await axios.post(
-        "https://bhartiyadharohar.in/api/website/enquiry/insert",
+        `h${API_BASE_URL}/api/website/enquiry/insert`,
         submitData 
       );
       toast({

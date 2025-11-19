@@ -32,6 +32,7 @@ import { useNavigate } from "react-router-dom";
 import AutoSuggestInput from "@/components/AutoSuggestInput";
 import MedicineForm, { Medicine } from "@/components/MedicineForm";
 import { PatientDisplaySection } from "@/components/PaitentDisplaySection";
+import API_BASE_URL from "@/config/api.config";
 
 // Local therapies data
 const therapiesData = [
@@ -227,7 +228,7 @@ const PastHistoryDialog = ({ patient }: { patient: PatientRecord }) => {
     queryFn: async () => {
       console.log(patient._id);
       const response = await fetch(
-        `https://bhartiyadharohar.in/api/website/enquiry/patient-visits/${patient._id}`
+        `${API_BASE_URL}/api/website/enquiry/patient-visits/${patient._id}`
       );
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -559,7 +560,7 @@ const PrescriptionForm = ({
     queryKey: ["medicines"],
     queryFn: async () => {
       try {
-        const response = await fetch("https://bhartiyadharohar.in/medicine/view");
+        const response = await fetch(`${API_BASE_URL}/medicine/view`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -679,7 +680,7 @@ const PrescriptionForm = ({
 
       // Save prescription to backend
       const response = await fetch(
-        "https://bhartiyadharohar.in/api/website/enquiry/savePrescription",
+        `${API_BASE_URL}/api/website/enquiry/savePrescription`,
         {
           method: "PATCH",
           headers: {
@@ -1173,7 +1174,7 @@ const fetchDoctorPatients = async (
     console.log(`Fetching patients for doctor: ${doctorName}`);
 
     const patientsResponse = await fetch(
-      "https://bhartiyadharohar.in/api/website/enquiry/view"
+      `${API_BASE_URL}/api/website/enquiry/view`
     );
     if (!patientsResponse.ok) {
       throw new Error(
@@ -1191,7 +1192,7 @@ const fetchDoctorPatients = async (
         console.log(`Fetching visits for patient ${patient.idno}...`);
 
         const visitsResponse = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/patient-visits/${patient._id}`
+          `${API_BASE_URL}/api/website/enquiry/patient-visits/${patient._id}`
         );
         if (!visitsResponse.ok) {
           console.warn(`Failed to fetch visits for patient ${patient.idno}`);
