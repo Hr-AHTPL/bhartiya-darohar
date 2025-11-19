@@ -10,6 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { User } from "lucide-react";
+import API_BASE_URL from "@/config/api.config";
 
 interface PatientDialogProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export default function PatientDialog({
     const fetchPatientName = async () => {
   if (patientId && patientId.trim() !== "") {
     try {
-      const response = await fetch("https://bhartiyadharohar.in/api/website/enquiry/view");
+      const response = await fetch(`${API_BASE_URL}/api/website/enquiry/view`);
 
       if (response.ok) {
         const data = await response.json();

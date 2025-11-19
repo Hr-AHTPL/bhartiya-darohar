@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Activity, Heart, Calendar, Users } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import API_BASE_URL from "@/config/api.config";
 
 export interface PatientRecord {
   _id: string;
@@ -107,7 +108,7 @@ const fetchPatientRecords = async (): Promise<PatientRecord[]> => {
     console.log("Fetching basic patient records...");
 
     const patientsResponse = await fetch(
-      "https://bhartiyadharohar.in/api/website/enquiry/view"
+      `${API_BASE_URL}/api/website/enquiry/view`
     );
 
     if (!patientsResponse.ok) {
@@ -124,7 +125,7 @@ const fetchPatientRecords = async (): Promise<PatientRecord[]> => {
         console.log(`Fetching visits for patient ${patient.idno}...`);
 
         const visitsResponse = await fetch(
-          `https://bhartiyadharohar.in/api/website/enquiry/patient-visits/${patient._id}`
+          `${API_BASE_URL}/api/website/enquiry/patient-visits/${patient._id}`
         );
 
         if (!visitsResponse.ok) {
