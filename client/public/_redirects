@@ -1,21 +1,7 @@
-# Static assets - serve directly (MUST BE FIRST)
-/assets/*  /assets/:splat  200
-/icon2.png  /icon2.png  200
-/BD1w.png  /BD1w.png  200
-/*.png  /:splat  200
-/*.jpg  /:splat  200
-/*.jpeg  /:splat  200
-/*.gif  /:splat  200
-/*.svg  /:splat  200
-/*.ico  /:splat  200
-/*.webp  /:splat  200
-/*.css  /:splat  200
-/*.js  /:splat  200
-/*.json  /:splat  200
+# Static files - must be first
+/icon2.png    /icon2.png    200
+/BD1w.png     /BD1w.png     200
+/assets/*     /assets/:splat     200
 
-# API calls should not be redirected
-/api/*  https://api.bhartiyadharohar.in/api/:splat  200
-/auth/*  https://api.bhartiyadharohar.in/auth/:splat  200
-
-# SPA fallback - MUST BE LAST
-/*  /index.html  200
+# All other routes go to SPA
+/*    /index.html   200
