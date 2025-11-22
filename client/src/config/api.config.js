@@ -6,7 +6,7 @@ const getApiBaseUrl = () => {
   }
   
   // Production - use environment variable or deployed backend URL
-  return import.meta.env.VITE_API_BASE_URL || 'https://api.bhartiyadharohar.in';
+  return import.meta.env.VITE_API_BASE_URL || 'http://api.bhartiyadharohar.in';
 };
 
 export const API_BASE_URL = getApiBaseUrl();
