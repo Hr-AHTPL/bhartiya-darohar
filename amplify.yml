@@ -8,8 +8,13 @@ frontend:
     build:
       commands:
         - npm run build
-        # Verify _redirects file exists
-        - ls -la dist/
+        # Ensure _redirects is copied to dist
+        - cp public/_redirects dist/_redirects 2>/dev/null || echo "Warning: _redirects not found in public/"
+        # Verify _redirects file exists in dist
+        - ls -la dist/ | grep _redirects || echo "ERROR: _redirects not in dist!"
+        - echo "=== Contents of _redirects ==="
+        - cat dist/_redirects 2>/dev/null || echo "ERROR: Cannot read _redirects"
+        - echo "=== End of _redirects ==="
   artifacts:
     baseDirectory: client/dist
     files:
