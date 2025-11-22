@@ -1,3 +1,4 @@
+
 # Static assets - must come first
 /assets/*     /assets/:splat     200
 /*.png        /:splat            200
