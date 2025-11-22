@@ -15,5 +15,5 @@
 /*.json       /:splat            200
 /*.map        /:splat            200
 
-# SPA fallback - must be last
-/*            /index.html        200!
+# SPA fallback - must be last  
+/*            /index.html        200
