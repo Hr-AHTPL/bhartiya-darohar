@@ -15,4 +15,4 @@
 /*.map        /:splat            200
 
 # SPA fallback - must be last
-/*            /index.html        200
+/*            /index.html        200!
