@@ -8,9 +8,7 @@ frontend:
     build:
       commands:
         - npm run build
-        # Ensure _redirects is copied to dist
         - if [ -f public/_redirects ]; then cp public/_redirects dist/_redirects; fi
-        # Verify _redirects file exists in dist
         - ls -la dist/
         - echo "=== Checking for _redirects ==="
         - if [ -f dist/_redirects ]; then echo "SUCCESS - _redirects found"; cat dist/_redirects; else echo "ERROR - _redirects NOT found"; fi
@@ -21,12 +19,3 @@ frontend:
   cache:
     paths:
       - client/node_modules/**/*
-  customHeaders:
-    - pattern: '**/*'
-      headers:
-        - key: 'Cache-Control'
-          value: 'public, max-age=31536000, immutable'
-    - pattern: '*.html'
-      headers:
-        - key: 'Cache-Control'
-          value: 'no-cache'
