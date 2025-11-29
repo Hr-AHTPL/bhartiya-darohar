@@ -1,5 +1,6 @@
 const patientModel = require("../../models/patientDetails.model");
 const counterModel = require("../../models/counterDetails");
+const PurchaseModel = require("../../models/purchase.model"); // Add this line
 const ExcelJS = require("exceljs");
 const path = require("path");
 const fs = require("fs");
@@ -122,6 +123,14 @@ const exportPrakritiCashReceipt = async (req, res) => {
       return res.status(404).json({ message: "No last visit found" });
     }
 
+    // ✅ Generate Bill Number using existing counterModel
+    const billCounter = await counterModel.findOneAndUpdate(
+      { name: "bill_number_counter" },
+      { $inc: { value: 1 } },
+      { new: true, upsert: true }
+    );
+    const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
+
     const numericFee = Number(feeAmount);
     const numericReceived = Number(receivedAmount);
     const numericDiscount = Number(discount);
@@ -193,12 +202,6 @@ const exportPrakritiCashReceipt = async (req, res) => {
       return res.status(400).json({ message: "Worksheet not found" });
     }
 
-    // Set dynamic ID
-    const phoneStr = String(patient.phone || "");
-    const customID = `BD${(patient.firstName?.[0] || "").toUpperCase()}${(
-      patient.lastName?.[0] || ""
-    ).toUpperCase()}${phoneStr.slice(-3)}`;
-
     const date = new Date().toLocaleDateString();
     const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`;
     const address = `${patient.houseno || ""}, ${patient.city || ""}`;
@@ -210,15 +213,23 @@ const exportPrakritiCashReceipt = async (req, res) => {
     };
 
     const feeCellMap = {
+      // ✅ Bill Number (Column B, Row 6 and 26)
+      B6: billNumber,
+      B26: billNumber,
+
+      // Receipt Title
       D5: `Cash Receipt for ${purpose || "Unknown Purpose"}`,
       D25: `Cash Receipt for ${purpose || "Unknown Purpose"}`,
 
-      B6: patient.idno,
-      B26: patient.idno,
+      // ✅ ID No. moved to Column D (Row 6 and 26)
+      E6: patient.idno,
+      E26: patient.idno,
 
+      // Date
       H6: lastVisit.date,
       H26: lastVisit.date,
 
+      // Patient Details
       B7: fullName,
       B27: fullName,
 
@@ -243,6 +254,7 @@ const exportPrakritiCashReceipt = async (req, res) => {
       B10: patient.phone || "",
       B30: patient.phone || "",
 
+      // Financial Details
       E10: numericFee,
       E30: numericFee,
 
@@ -261,7 +273,7 @@ const exportPrakritiCashReceipt = async (req, res) => {
       E14: balance,
       E34: balance,
 
-      // Optional display for therapy name
+      // Optional therapy name display
       A18:
         purpose === "Therapy" && therapyName ? therapyName.toUpperCase() : "",
       A38:
@@ -270,16 +282,20 @@ const exportPrakritiCashReceipt = async (req, res) => {
 
     updateCells(feeCellMap);
 
-    // Send file to client
+    // ✅ Send file with bill number in filename
     const buffer = await workbook.xlsx.writeBuffer();
-    const fileName = `cash_receipt_${customID}_amount_${numericFee}.xlsx`;
+    const cleanPatientName = fullName.replace(/[^a-zA-Z0-9]/g, '_');
+    const cleanPurpose = purpose.replace(/\s+/g, '_');
+    const cleanBillNumber = billNumber.replace(/\//g, '_');
+
+    const fileName = `${cleanBillNumber}_${cleanPatientName}_receipt_${cleanPurpose}.xlsx`;
 
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.send(buffer);
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.send(buffer);
   } catch (error) {
     console.error("Error exporting cash receipt:", error);
     res
@@ -854,20 +870,74 @@ const patientList = async (req, res) => {
   res.send({ status: 1, enquiryList: enquiry });
 };
 
+// OPTIMIZED VERSION - Replace the existing exportPatientMaster function
+
 const exportPatientMaster = async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
+    
+    // Parse dates once
     const fromDate = new Date(dateFrom);
     const toDate = new Date(dateTo);
-    toDate.setHours(23, 59, 59, 999); // Include end of day
+    toDate.setHours(23, 59, 59, 999);
 
+    // Helper function to parse DD/MM/YYYY
     const parseDDMMYYYY = (str) => {
       const [day, month, year] = str.split("/").map(Number);
       return new Date(year, month - 1, day);
     };
 
-    // Step 1: Fetch patient list
-    const enquiryList = await patientModel.find();
+    // 🔥 OPTIMIZATION 1: Single aggregation query instead of N+1 queries
+    const patientsWithVisits = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false, // Only patients with visits
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          gender: 1,
+          age: 1,
+          houseno: 1,
+          city: 1,
+          district: 1,
+          state: 1,
+          pin: 1,
+          aadharnum: 1,
+          phone: 1,
+          email: 1,
+          visitDate: "$visits.date",
+        },
+      },
+    ]);
+
+    // 🔥 OPTIMIZATION 2: Filter in memory (faster than DB for date strings)
+    const filteredData = patientsWithVisits.filter((record) => {
+      if (!record.visitDate) return false;
+      const visitDate = parseDDMMYYYY(record.visitDate);
+      return visitDate >= fromDate && visitDate <= toDate;
+    });
+
+    // 🔥 OPTIMIZATION 3: Remove duplicates efficiently using Set
+    const uniqueRecords = new Map();
+    filteredData.forEach((record) => {
+      const key = `${record._id}_${record.visitDate}`;
+      if (!uniqueRecords.has(key)) {
+        uniqueRecords.set(key, record);
+      }
+    });
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Patient Master");
@@ -888,7 +958,7 @@ const exportPatientMaster = async (req, res) => {
       { header: "Date", key: "visitDate", width: 20 },
     ];
 
-    // Style header row
+    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, color: { argb: "FF000000" }, size: 12 };
@@ -906,53 +976,24 @@ const exportPatientMaster = async (req, res) => {
       };
     });
 
-    worksheet.columns.forEach((col) => {
-      col.alignment = { horizontal: "left" };
-    });
+    // 🔥 OPTIMIZATION 4: Batch add rows (much faster)
+    const rows = Array.from(uniqueRecords.values()).map((record) => ({
+      idno: record.idno || "",
+      name: `${record.firstName?.trim() || ""} ${record.lastName?.trim() || ""}`.trim(),
+      gender: record.gender || "",
+      age: record.age || "",
+      houseno: record.houseno || "",
+      city: record.city || "",
+      district: record.district || "",
+      state: record.state || "",
+      pin: record.pin || "",
+      aadharnum: record.aadharnum?.toString().padStart(12, "0") || "",
+      phone: record.phone || "",
+      email: record.email || "",
+      visitDate: record.visitDate,
+    }));
 
-    // Step 2: Add unique patients per visit date
-    const uniquePatientVisitDates = new Set();
-
-    for (const patient of enquiryList) {
-      try {
-        const visits = await visitModel
-          .find({ patientId: patient._id })
-          .sort({ date: -1 });
-
-        for (const visit of visits) {
-          if (!visit.date) continue;
-          const visitDateObj = parseDDMMYYYY(visit.date);
-          if (visitDateObj >= fromDate && visitDateObj <= toDate) {
-            const key = `${patient._id}_${visit.date}`;
-            if (uniquePatientVisitDates.has(key)) continue;
-
-            uniquePatientVisitDates.add(key);
-
-            worksheet.addRow({
-              idno: patient.idno || "",
-              name: `${patient.firstName?.trim() || ""} ${
-                patient.lastName?.trim() || ""
-              }`.trim(),
-              gender: patient.gender || "",
-              age: patient.age || "",
-              houseno: patient.houseno || "",
-              city: patient.city || "",
-              district: patient.district || "",
-              state: patient.state || "",
-              pin: patient.pin || "",
-              aadharnum: patient.aadharnum?.toString().padStart(12, "0") || "",
-              phone: patient.phone || "",
-              email: patient.email || "",
-              visitDate: visit.date,
-            });
-          }
-        }
-      } catch (err) {
-        console.error(
-          `Error fetching visits for patient ${patient._id}: ${err.message}`
-        );
-      }
-    }
+    worksheet.addRows(rows);
 
     res.setHeader(
       "Content-Type",
@@ -967,24 +1008,71 @@ const exportPatientMaster = async (req, res) => {
     res.end();
   } catch (error) {
     console.error("Error exporting patient master:", error.message);
-    res
-      .status(500)
-      .json({ message: "Failed to export Excel", error: error.message });
+    res.status(500).json({ 
+      message: "Failed to export Excel", 
+      error: error.message 
+    });
   }
 };
+// OPTIMIZED VERSION - Replace exportPatientBillingMaster function
+
 const exportPatientBillingMaster = async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
     const fromDate = new Date(dateFrom);
     const toDate = new Date(dateTo);
     toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
 
     const parseDDMMYYYY = (str) => {
       const [day, month, year] = str.split("/").map(Number);
       return new Date(year, month - 1, day);
     };
 
-    const enquiryList = await patientModel.find();
+    // 🔥 OPTIMIZATION: Single aggregation with all data
+    const billingData = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          visitDate: "$visits.date",
+          consultationamount: "$visits.consultationamount",
+          prakritiparikshanamount: "$visits.prakritiparikshanamount",
+          therapyWithAmount: "$visits.therapyWithAmount",
+          sponsor: "$visits.sponsor",
+        },
+      },
+    ]);
+
+    // Filter by date
+    const filteredData = billingData.filter((record) => {
+      if (!record.visitDate) return false;
+      const visitDate = parseDDMMYYYY(record.visitDate);
+      visitDate.setHours(0, 0, 0, 0);
+      return (
+        visitDate.getTime() >= fromDate.getTime() &&
+        visitDate.getTime() <= toDate.getTime()
+      );
+    });
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Patient Summary");
@@ -997,11 +1085,7 @@ const exportPatientBillingMaster = async (req, res) => {
       { header: "Mobile", key: "phone", width: 15 },
       { header: "Aadhar No.", key: "aadharnum", width: 20 },
       { header: "Consultation Amount", key: "consultationamount", width: 20 },
-      {
-        header: "Prakriti Parikshan Amount",
-        key: "prakritiparikshanamount",
-        width: 25,
-      },
+      { header: "Prakriti Parikshan Amount", key: "prakritiparikshanamount", width: 25 },
       { header: "Therapy Amount", key: "therapyamount", width: 18 },
       { header: "Total Amount", key: "totalamount", width: 18 },
       { header: "Therapy Name", key: "therapyname", width: 40 },
@@ -1009,6 +1093,7 @@ const exportPatientBillingMaster = async (req, res) => {
       { header: "Sponsor", key: "sponsor", width: 20 },
     ];
 
+    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, color: { argb: "FF000000" }, size: 12 };
@@ -1026,72 +1111,44 @@ const exportPatientBillingMaster = async (req, res) => {
       };
     });
 
-    worksheet.columns.forEach((col) => {
-      col.alignment = { horizontal: "left" };
+    // Prepare rows
+    const rows = filteredData.map((record) => {
+      const consultation = Number(record.consultationamount) || 0;
+      const prakriti = Number(record.prakritiparikshanamount) || 0;
+
+      const therapyWithAmountArray = Array.isArray(record.therapyWithAmount)
+        ? record.therapyWithAmount
+        : [];
+
+      const therapy = therapyWithAmountArray.reduce(
+        (sum, t) => sum + (Number(t.receivedAmount) || 0),
+        0
+      );
+
+      const therapyNames = therapyWithAmountArray
+        .map((t) => t.name)
+        .join(", ");
+
+      const total = consultation + prakriti + therapy;
+
+      return {
+        idno: record.idno || "",
+        name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+        age: record.age || "",
+        gender: record.gender || "",
+        phone: record.phone || "",
+        aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
+        consultationamount: consultation,
+        prakritiparikshanamount: prakriti,
+        therapyamount: therapy,
+        totalamount: total,
+        therapyname: therapyNames,
+        date: record.visitDate,
+        sponsor: record.sponsor || "",
+      };
     });
 
-    for (const patient of enquiryList) {
-      try {
-        const visits = await visitModel
-          .find({ patientId: patient._id })
-          .sort({ date: -1 });
-
-        visits.forEach((visit) => {
-          if (!visit.date) return;
-
-          const visitDate = parseDDMMYYYY(visit.date);
-          visitDate.setHours(0, 0, 0, 0);
-          fromDate.setHours(0, 0, 0, 0);
-          toDate.setHours(23, 59, 59, 999);
-
-          if (
-            visitDate.getTime() >= fromDate.getTime() &&
-            visitDate.getTime() <= toDate.getTime()
-          ) {
-            const consultation = Number(visit.consultationamount) || 0;
-            const prakriti = Number(visit.prakritiparikshanamount) || 0;
-
-            const therapyWithAmountArray = Array.isArray(
-              visit.therapyWithAmount
-            )
-              ? visit.therapyWithAmount
-              : [];
-
-            const therapy = therapyWithAmountArray.reduce(
-              (sum, t) => sum + (Number(t.receivedAmount) || 0),
-              0
-            );
-
-            const therapyNames = therapyWithAmountArray
-              .map((t) => t.name)
-              .join(", ");
-
-            const total = consultation + prakriti + therapy;
-
-            worksheet.addRow({
-              idno: patient.idno || "",
-              name: `${patient.firstName || ""} ${
-                patient.lastName || ""
-              }`.trim(),
-              age: patient.age || "",
-              gender: patient.gender || "",
-              phone: patient.phone || "",
-              aadharnum:
-                `${patient.aadharnum?.toString().padStart(12, "0")}` || "",
-              consultationamount: consultation,
-              prakritiparikshanamount: prakriti,
-              therapyamount: therapy,
-              totalamount: total,
-              therapyname: therapyNames,
-              date: visit.date,
-              sponsor: visit.sponsor || "",
-            });
-          }
-        });
-      } catch (err) {
-        console.error(`Visit fetch failed for ${patient._id}:`, err.message);
-      }
-    }
+    worksheet.addRows(rows);
 
     res.setHeader(
       "Content-Type",
@@ -1275,51 +1332,46 @@ const exportRevenueReport = async (req, res) => {
       return new Date(year, month - 1, day);
     };
 
-    // ----------------- 1. Fetch patient enquiries -----------------
-    const enquiryList = await patientModel.find();
+    // ✅ OPTIMIZED: Fetch all patients IDs only
+    const patients = await patientModel.find().select('_id').lean();
+    const patientIds = patients.map(p => p._id);
 
+    // ✅ OPTIMIZED: Fetch all visits in ONE query
+    const allVisits = await visitModel.find({ 
+      patientId: { $in: patientIds }
+    }).lean();
+
+    // Filter and calculate from visits
     let consultationSum = 0;
     let therapySum = 0;
     let otherServicesSum = 0;
 
-    for (const patient of enquiryList) {
-      try {
-        const visits = await visitModel.find({ patientId: patient._id });
+    allVisits.forEach((visit) => {
+      if (!visit.date) return;
+      
+      const visitDate = parseDDMMYYYY(visit.date);
+      if (visitDate >= fromDate && visitDate <= toDate) {
+        consultationSum += Number(visit.consultationamount || 0);
+        otherServicesSum += Number(visit.prakritiparikshanamount || 0);
 
-        visits.forEach((visit) => {
-          if (!visit.date) return;
-
-          const visitDate = parseDDMMYYYY(visit.date);
-          if (visitDate >= fromDate && visitDate <= toDate) {
-            consultationSum += Number(visit.consultationamount || 0);
-            otherServicesSum += Number(visit.prakritiparikshanamount || 0);
-
-            // ✅ New logic: Sum therapy amounts from therapies array
-            if (Array.isArray(visit.therapyWithAmount)) {
-              therapySum += visit.therapyWithAmount.reduce(
-                (sum, t) => sum + Number(t.receivedAmount || 0),
-                0
-              );
-            }
-          }
-        });
-      } catch (err) {
-        console.error(
-          `Error fetching visits for patient ${patient._id}:`,
-          err.message
-        );
+        if (Array.isArray(visit.therapyWithAmount)) {
+          therapySum += visit.therapyWithAmount.reduce(
+            (sum, t) => sum + Number(t.receivedAmount || 0),
+            0
+          );
+        }
       }
-    }
-
-    // ----------------- 2. Fetch medicine sales -----------------
-    const sales = await saleModel.find();
-
-    const filteredSales = sales.filter((sale) => {
-      const saleDate = new Date(sale.saleDate);
-      return saleDate >= fromDate && saleDate <= toDate;
     });
 
-    const medicineSum = filteredSales.reduce(
+    // ✅ OPTIMIZED: Fetch sales in ONE query with date filter
+    const sales = await saleModel.find({
+      saleDate: {
+        $gte: dateFrom,
+        $lte: dateTo
+      }
+    }).lean();
+
+    const medicineSum = sales.reduce(
       (sum, sale) => sum + Number(sale.totalAmount || 0),
       0
     );
@@ -1327,7 +1379,7 @@ const exportRevenueReport = async (req, res) => {
     const totalRevenue =
       consultationSum + therapySum + otherServicesSum + medicineSum;
 
-    // ----------------- 3. Generate Excel -----------------
+    // Generate Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Revenue Report");
 
@@ -1399,7 +1451,78 @@ const exportRevenueReport = async (req, res) => {
 
 const exportMedicineStock = async (req, res) => {
   try {
+    const { dateFrom, dateTo } = req.query;
+    
+    // Get all medicines with current stock
     const medicines = await medicineModel.find();
+    
+    if (dateFrom && dateTo) {
+      // Use the END date (dateTo) to calculate stock as of that date
+      const selectedDate = new Date(dateTo);
+      selectedDate.setHours(23, 59, 59, 999);
+      
+      // Get ALL purchases and sales
+      const allPurchases = await PurchaseModel.find({});
+      const allSales = await saleModel.find({});
+      
+      // Parse sale date helper
+      const parseSaleDate = (dateStr) => {
+        if (!dateStr) return null;
+        if (dateStr.includes('/')) {
+          const [day, month, year] = dateStr.split('/').map(Number);
+          return new Date(year, month - 1, day);
+        }
+        return new Date(dateStr);
+      };
+      
+      // Calculate quantities AFTER the selected date
+      const purchaseAfter = {};
+      const soldAfter = {};
+      
+      // Process ALL purchases that happened AFTER the selected date
+      allPurchases.forEach(p => {
+        const purchaseDate = new Date(p.billingDate);
+        purchaseDate.setHours(0, 0, 0, 0);
+        
+        if (purchaseDate > selectedDate && p.medicines) {
+          p.medicines.forEach(m => {
+            const medicineName = m.name;
+            const qty = m.quantity || 0;
+            purchaseAfter[medicineName] = (purchaseAfter[medicineName] || 0) + qty;
+          });
+        }
+      });
+      
+      // Process ALL sales that happened AFTER the selected date
+      allSales.forEach(s => {
+        const saleDate = parseSaleDate(s.saleDate);
+        if (saleDate) {
+          saleDate.setHours(0, 0, 0, 0);
+          
+          if (saleDate > selectedDate && s.medicines) {
+            s.medicines.forEach(m => {
+              const medicineName = m.medicineName;
+              const qty = m.quantity || 0;
+              soldAfter[medicineName] = (soldAfter[medicineName] || 0) + qty;
+            });
+          }
+        }
+      });
+      
+      // Calculate stock as it was on the selected date
+      medicines.forEach(med => {
+        const name = med['Product Name'];
+        const currentStock = med.Quantity || 0;
+        
+        // Formula: Stock on Selected Date = Current Stock + All Purchases After - All Sales After
+        const purchasedAfterDate = purchaseAfter[name] || 0;
+        const soldAfterDate = soldAfter[name] || 0;
+        
+        const stockOnDate = currentStock + purchasedAfterDate - soldAfterDate;
+        
+        med._doc.stockAtDate = Math.max(0, stockOnDate);
+      });
+    }
 
     const sortedList = medicines.sort((a, b) => {
       const codeA = isNaN(a.Code) ? a.Code.toString() : Number(a.Code);
@@ -1410,41 +1533,117 @@ const exportMedicineStock = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Medicine Stock");
 
-    worksheet.columns = [
-      { header: "Code", key: "Code", width: 10 },
-      { header: "Product Name", key: "ProductName", width: 40 },
-      { header: "Unit", key: "Unit", width: 10 },
-      { header: "Company", key: "Company", width: 20 },
-      { header: "Quantity", key: "Quantity", width: 10 },
-    ];
-
-    const headerRow = worksheet.getRow(1);
-    headerRow.eachCell((cell) => {
-      cell.font = { bold: true };
-      cell.fill = {
+    // ✅ ADD TITLE AND DATE HEADERS
+    if (dateFrom && dateTo) {
+      const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
+      
+      // Row 1: Main Title
+      worksheet.mergeCells('A1:F1');
+      const titleCell = worksheet.getCell('A1');
+      titleCell.value = `Stock on  Date`;
+      titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleCell.fill = {
         type: "pattern",
         pattern: "solid",
-        fgColor: { argb: "FFFF00" },
+        fgColor: { argb: "FFD9D9D9" },
       };
-      cell.alignment = { horizontal: "center", vertical: "middle" };
-      cell.border = {
-        top: { style: "thin" },
-        bottom: { style: "thin" },
-        left: { style: "thin" },
-        right: { style: "thin" },
-      };
-    });
-
-    sortedList.forEach((item) => {
-      const row = worksheet.addRow({
-        Code: item.Code,
-        ProductName: item["Product Name"],
-        Unit: item.Unit,
-        Company: item.Company,
-        Quantity: item.Quantity,
+      
+      // Row 2: Date Info
+      worksheet.mergeCells('A2:F2');
+      const dateCell = worksheet.getCell('A2');
+      dateCell.value = `Report Date: ${displayDate}`;
+      dateCell.font = { bold: true, size: 12 };
+      dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      
+      // Row 3: Empty row for spacing
+      worksheet.addRow([]);
+      
+      // Row 4: Column Headers
+      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date"]);
+      
+      // Style the column header row (row 4)
+      const headerRow = worksheet.getRow(4);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, size: 11 };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF00" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
       });
+      
+      // Set column widths
+      worksheet.getColumn(1).width = 10;  // Code
+      worksheet.getColumn(2).width = 40;  // Product Name
+      worksheet.getColumn(3).width = 10;  // Unit
+      worksheet.getColumn(4).width = 20;  // Company
+      worksheet.getColumn(5).width = 15;  // Current Stock
+      worksheet.getColumn(6).width = 20;  // Stock on Selected Date
+      
+    } else {
+      // Without dates - simple header
+      worksheet.columns = [
+        { header: "Code", key: "code", width: 10 },
+        { header: "Product Name", key: "name", width: 40 },
+        { header: "Unit", key: "unit", width: 10 },
+        { header: "Company", key: "company", width: 20 },
+        { header: "Quantity", key: "quantity", width: 15 }
+      ];
+      
+      const headerRow = worksheet.getRow(1);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF00" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
+    }
+
+    // Add data rows
+    sortedList.forEach((item) => {
+      const rowData = dateFrom && dateTo
+        ? [
+            item.Code,
+            item["Product Name"],
+            item.Unit,
+            item.Company,
+            item.Quantity, // Current stock (today)
+            item._doc?.stockAtDate ?? item.Quantity // Stock on selected date
+          ]
+        : [
+            item.Code,
+            item["Product Name"],
+            item.Unit,
+            item.Company,
+            item.Quantity
+          ];
+      
+      const row = worksheet.addRow(rowData);
       row.eachCell((cell) => {
         cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
       });
     });
 
@@ -1470,10 +1669,86 @@ const exportMedicineStock = async (req, res) => {
 
 const exportLowStock = async (req, res) => {
   try {
+    const { dateFrom, dateTo } = req.query;
+    const MIN_STOCK = 10;
+    
+    // Get all medicines
     const medicines = await medicineModel.find();
+    
+    // If dates provided, calculate stock as it was on that date
+    if (dateFrom && dateTo) {
+      // Use the END date to calculate stock
+      const selectedDate = new Date(dateTo);
+      selectedDate.setHours(23, 59, 59, 999);
+      
+      const allPurchases = await PurchaseModel.find({});
+      const allSales = await saleModel.find({});
+      
+      const purchaseAfter = {};
+      const soldAfter = {};
+      
+      // Parse sale date helper
+      const parseSaleDate = (dateStr) => {
+        if (!dateStr) return null;
+        if (dateStr.includes('/')) {
+          const [day, month, year] = dateStr.split('/').map(Number);
+          return new Date(year, month - 1, day);
+        }
+        return new Date(dateStr);
+      };
+      
+      // Process purchases AFTER selected date
+      allPurchases.forEach(p => {
+        const purchaseDate = new Date(p.billingDate);
+        purchaseDate.setHours(0, 0, 0, 0);
+        
+        if (purchaseDate > selectedDate && p.medicines) {
+          p.medicines.forEach(m => {
+            const medicineName = m.name;
+            const qty = m.quantity || 0;
+            purchaseAfter[medicineName] = (purchaseAfter[medicineName] || 0) + qty;
+          });
+        }
+      });
+      
+      // Process sales AFTER selected date
+      allSales.forEach(s => {
+        const saleDate = parseSaleDate(s.saleDate);
+        if (saleDate) {
+          saleDate.setHours(0, 0, 0, 0);
+          
+          if (saleDate > selectedDate && s.medicines) {
+            s.medicines.forEach(m => {
+              const medicineName = m.medicineName;
+              const qty = m.quantity || 0;
+              soldAfter[medicineName] = (soldAfter[medicineName] || 0) + qty;
+            });
+          }
+        }
+      });
+      
+      // Calculate stock on selected date
+      medicines.forEach(med => {
+        const name = med['Product Name'];
+        const currentStock = med.Quantity || 0;
+        
+        const purchasedAfterDate = purchaseAfter[name] || 0;
+        const soldAfterDate = soldAfter[name] || 0;
+        
+        const stockOnDate = currentStock + purchasedAfterDate - soldAfterDate;
+        
+        med._doc.stockAtDate = Math.max(0, stockOnDate);
+      });
+    }
 
+    // Filter for low stock based on calculated stock at date
     const filteredSortedList = medicines
-      .filter((item) => Number(item.Quantity) <= 10)
+      .filter((item) => {
+        const stockToCheck = dateFrom && dateTo 
+          ? (item._doc?.stockAtDate ?? item.Quantity)
+          : item.Quantity;
+        return Number(stockToCheck) <= MIN_STOCK;
+      })
       .sort((a, b) => {
         const codeA = isNaN(a.Code) ? a.Code.toString() : Number(a.Code);
         const codeB = isNaN(b.Code) ? b.Code.toString() : Number(b.Code);
@@ -1481,43 +1756,119 @@ const exportLowStock = async (req, res) => {
       });
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("Low Stock Medicines");
+    const worksheet = workbook.addWorksheet("Low Stock Alert");
 
-    worksheet.columns = [
-      { header: "Code", key: "Code", width: 10 },
-      { header: "Product Name", key: "ProductName", width: 40 },
-      { header: "Unit", key: "Unit", width: 10 },
-      { header: "Company", key: "Company", width: 20 },
-      { header: "Quantity", key: "Quantity", width: 10 },
-    ];
-
-    const headerRow = worksheet.getRow(1);
-    headerRow.eachCell((cell) => {
-      cell.font = { bold: true };
-      cell.fill = {
+    // ✅ MATCH RUNNING STOCK REPORT STRUCTURE
+    if (dateFrom && dateTo) {
+      const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
+      
+      // Row 1: Main Title
+      worksheet.mergeCells('A1:F1');
+      const titleCell = worksheet.getCell('A1');
+      titleCell.value = `Low Stock Alert`;
+      titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleCell.fill = {
         type: "pattern",
         pattern: "solid",
-        fgColor: { argb: "FFFF00" },
+        fgColor: { argb: "FFD9D9D9" },
       };
-      cell.alignment = { horizontal: "center", vertical: "middle" };
-      cell.border = {
-        top: { style: "thin" },
-        bottom: { style: "thin" },
-        left: { style: "thin" },
-        right: { style: "thin" },
-      };
-    });
-
-    filteredSortedList.forEach((item) => {
-      const row = worksheet.addRow({
-        Code: item.Code,
-        ProductName: item["Product Name"],
-        Unit: item.Unit,
-        Company: item.Company,
-        Quantity: item.Quantity,
+      
+      // Row 2: Date Info
+      worksheet.mergeCells('A2:F2');
+      const dateCell = worksheet.getCell('A2');
+      dateCell.value = `Report Date: ${displayDate}`;
+      dateCell.font = { bold: true, size: 12 };
+      dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      
+      // Row 3: Empty row for spacing
+      worksheet.addRow([]);
+      
+      // Row 4: Column Headers (EXACTLY matching running stock report)
+      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date"]);
+      
+      // Style the column header row (row 4)
+      const headerRow = worksheet.getRow(4);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, size: 11 };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF00" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
       });
+      
+      // Set column widths (EXACTLY matching running stock report)
+      worksheet.getColumn(1).width = 10;  // Code
+      worksheet.getColumn(2).width = 40;  // Product Name
+      worksheet.getColumn(3).width = 10;  // Unit
+      worksheet.getColumn(4).width = 20;  // Company
+      worksheet.getColumn(5).width = 15;  // Current Stock
+      worksheet.getColumn(6).width = 20;  // Stock on Selected Date
+      
+    } else {
+      // Without dates - simple header
+      worksheet.columns = [
+        { header: "Code", key: "code", width: 10 },
+        { header: "Product Name", key: "name", width: 40 },
+        { header: "Unit", key: "unit", width: 10 },
+        { header: "Company", key: "company", width: 20 },
+        { header: "Quantity", key: "quantity", width: 15 }
+      ];
+      
+      const headerRow = worksheet.getRow(1);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF00" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
+    }
+
+    // Add data rows
+    filteredSortedList.forEach((item) => {
+      const rowData = dateFrom && dateTo
+        ? [
+            item.Code,
+            item["Product Name"],
+            item.Unit,
+            item.Company,
+            item.Quantity, // Current stock (today)
+            item._doc?.stockAtDate ?? item.Quantity // Stock on selected date
+          ]
+        : [
+            item.Code,
+            item["Product Name"],
+            item.Unit,
+            item.Company,
+            item.Quantity
+          ];
+      
+      const row = worksheet.addRow(rowData);
       row.eachCell((cell) => {
         cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
       });
     });
 
@@ -1527,7 +1878,7 @@ const exportLowStock = async (req, res) => {
     );
     res.setHeader(
       "Content-Disposition",
-      "attachment; filename=LowStockMedicines.xlsx"
+      "attachment; filename=LowStockAlert.xlsx"
     );
 
     await workbook.xlsx.write(res);
@@ -1541,19 +1892,67 @@ const exportLowStock = async (req, res) => {
   }
 };
 
+// OPTIMIZED VERSION - Replace exportPrakritiParikshanPatients function
+
 const exportPrakritiParikshanPatients = async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
     const fromDate = new Date(dateFrom);
     const toDate = new Date(dateTo);
     toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
 
     const parseDDMMYYYY = (str) => {
       const [day, month, year] = str.split("/").map(Number);
       return new Date(year, month - 1, day);
     };
 
-    const patients = await patientModel.find();
+    // 🔥 OPTIMIZATION: Single aggregation with filter
+    const prakritiData = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $match: {
+          "visits.prakritiparikshanamount": { $gt: 0 }, // Filter at DB level
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          visitDate: "$visits.date",
+          prakritiparikshanamount: "$visits.prakritiparikshanamount",
+        },
+      },
+    ]);
+
+    // Filter by date in memory
+    const filteredData = prakritiData.filter((record) => {
+      if (!record.visitDate) return false;
+      const visitDate = parseDDMMYYYY(record.visitDate);
+      visitDate.setHours(0, 0, 0, 0);
+      return (
+        visitDate.getTime() >= fromDate.getTime() &&
+        visitDate.getTime() <= toDate.getTime()
+      );
+    });
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Prakriti Patients");
@@ -1565,14 +1964,11 @@ const exportPrakritiParikshanPatients = async (req, res) => {
       { header: "Sex", key: "gender", width: 10 },
       { header: "Mobile", key: "phone", width: 15 },
       { header: "Aadhar No.", key: "aadharnum", width: 20 },
-      {
-        header: "Prakriti Parikshan Amount",
-        key: "prakritiparikshanamount",
-        width: 30,
-      },
+      { header: "Prakriti Parikshan Amount", key: "prakritiparikshanamount", width: 30 },
       { header: "Date", key: "date", width: 15 },
     ];
 
+    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, color: { argb: "FF000000" }, size: 12 };
@@ -1590,36 +1986,19 @@ const exportPrakritiParikshanPatients = async (req, res) => {
       };
     });
 
-    worksheet.columns.forEach((col) => {
-      col.alignment = { horizontal: "left" };
-    });
+    // Prepare rows
+    const rows = filteredData.map((record) => ({
+      idno: record.idno || "",
+      name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+      age: record.age || "",
+      gender: record.gender || "",
+      phone: record.phone || "",
+      aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
+      prakritiparikshanamount: Number(record.prakritiparikshanamount),
+      date: record.visitDate,
+    }));
 
-    for (const patient of patients) {
-      const visits = await visitModel.find({ patientId: patient._id });
-
-      visits.forEach((visit) => {
-        if (!visit.date) return;
-        const visitDate = parseDDMMYYYY(visit.date);
-
-        if (
-          visitDate >= fromDate &&
-          visitDate <= toDate &&
-          Number(visit.prakritiparikshanamount) > 0
-        ) {
-          worksheet.addRow({
-            idno: patient.idno || "",
-            name: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
-            age: patient.age || "",
-            gender: patient.gender || "",
-            phone: patient.phone || "",
-            aadharnum:
-              `${patient.aadharnum?.toString().padStart(12, "0")}` || "",
-            prakritiparikshanamount: Number(visit.prakritiparikshanamount),
-            date: visit.date,
-          });
-        }
-      });
-    }
+    worksheet.addRows(rows);
 
     res.setHeader(
       "Content-Type",
@@ -1633,29 +2012,74 @@ const exportPrakritiParikshanPatients = async (req, res) => {
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {
-    console.error(
-      "Error exporting prakriti parikshan patients:",
-      error.message
-    );
+    console.error("Error exporting prakriti parikshan patients:", error.message);
     res.status(500).json({
       message: "Failed to export Excel",
       error: error.message,
     });
   }
 };
+// OPTIMIZED VERSION - Replace exportConsultationPatients function
+
 const exportConsultationPatients = async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
     const fromDate = new Date(dateFrom);
     const toDate = new Date(dateTo);
     toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
 
     const parseDDMMYYYY = (str) => {
       const [day, month, year] = str.split("/").map(Number);
       return new Date(year, month - 1, day);
     };
 
-    const patients = await patientModel.find();
+    // 🔥 OPTIMIZATION: Single aggregation with DB-level filtering
+    const consultationData = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $match: {
+          "visits.consultationamount": { $gt: 0 }, // Filter at DB level
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          visitDate: "$visits.date",
+          consultationamount: "$visits.consultationamount",
+        },
+      },
+    ]);
+
+    // Filter by date
+    const filteredData = consultationData.filter((record) => {
+      if (!record.visitDate) return false;
+      const visitDate = parseDDMMYYYY(record.visitDate);
+      visitDate.setHours(0, 0, 0, 0);
+      return (
+        visitDate.getTime() >= fromDate.getTime() &&
+        visitDate.getTime() <= toDate.getTime()
+      );
+    });
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Consultation Patients");
@@ -1671,6 +2095,7 @@ const exportConsultationPatients = async (req, res) => {
       { header: "Date", key: "date", width: 15 },
     ];
 
+    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, color: { argb: "FF000000" }, size: 12 };
@@ -1688,43 +2113,37 @@ const exportConsultationPatients = async (req, res) => {
       };
     });
 
-    for (const patient of patients) {
-      const visits = await visitModel.find({ patientId: patient._id });
+    // Prepare and add rows
+    const rows = filteredData.map((record) => {
+      const row = {
+        idno: record.idno || "",
+        name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+        age: record.age || "",
+        gender: record.gender || "",
+        phone: record.phone || "",
+        aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
+        consultationamount: Number(record.consultationamount),
+        date: record.visitDate,
+      };
+      return row;
+    });
 
-      visits.forEach((visit) => {
-        if (!visit.date) return;
-        const visitDate = parseDDMMYYYY(visit.date);
-        const consultationAmt = Number(visit.consultationamount || 0);
+    worksheet.addRows(rows);
 
-        if (
-          visitDate >= fromDate &&
-          visitDate <= toDate &&
-          consultationAmt > 0
-        ) {
-          const row = worksheet.addRow({
-            idno: patient.idno || "",
-            name: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
-            age: patient.age || "",
-            gender: patient.gender || "",
-            phone: patient.phone || "",
-            aadharnum:
-              `${patient.aadharnum?.toString().padStart(12, "0")}` || "",
-            consultationamount: consultationAmt,
-            date: visit.date,
-          });
-
-          row.eachCell((cell) => {
-            cell.alignment = { horizontal: "center", vertical: "middle" };
-            cell.border = {
-              top: { style: "thin" },
-              bottom: { style: "thin" },
-              left: { style: "thin" },
-              right: { style: "thin" },
-            };
-          });
-        }
-      });
-    }
+    // Center align all cells
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
+        });
+      }
+    });
 
     res.setHeader(
       "Content-Type",
@@ -1749,66 +2168,105 @@ const exportPatientsBySpeciality = async (req, res) => {
   try {
     const { dateFrom, dateTo, selectedSpecialty } = req.query;
 
+    console.log("📊 Disease Analysis Report Request:", { dateFrom, dateTo, selectedSpecialty });
+
     if (!selectedSpecialty || !dateFrom || !dateTo) {
       return res.status(400).json({
-        message:
-          "Missing selectedSpecialty, dateFrom or dateTo in query params",
+        message: "Missing selectedSpecialty, dateFrom or dateTo in query params",
       });
     }
 
+    // Parse specialties (case-insensitive)
     const specialties = selectedSpecialty
       .split(",")
-      .map((s) => s.trim().toLowerCase());
+      .map((s) => s.trim().toLowerCase())
+      .filter(s => s.length > 0);
 
-    const fromDate = new Date(dateFrom);
-    const toDate = new Date(dateTo);
-    toDate.setHours(23, 59, 59, 999);
+    if (specialties.length === 0) {
+      return res.status(400).json({
+        message: "No valid specialties provided",
+      });
+    }
 
+    // Parse dates
     const parseDDMMYYYY = (str) => {
       const [day, month, year] = str.split("/").map(Number);
       return new Date(year, month - 1, day);
     };
 
-    const patients = await patientModel.find();
-    const filteredRows = [];
+    const fromDate = parseDDMMYYYY(dateFrom);
+    const toDate = parseDDMMYYYY(dateTo);
+    toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
 
-    for (const patient of patients) {
-      const visits = await visitModel.find({ patientId: patient._id });
+    console.log("📅 Date Range:", { fromDate, toDate });
+    console.log("🏥 Specialties:", specialties);
 
-      visits.forEach((visit) => {
-        const visitSpecialty = visit.department?.trim().toLowerCase();
-        if (!visit.date || !visitSpecialty) return;
+    // ✅ FIX: Single aggregation query instead of N+1 queries
+    const results = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          department: "$visits.department",
+          visitDate: "$visits.date",
+        },
+      },
+    ]);
 
-        if (specialties.includes(visitSpecialty)) {
-          const visitDate = parseDDMMYYYY(visit.date);
-          if (visitDate >= fromDate && visitDate <= toDate) {
-            filteredRows.push({
-              idno: patient.idno,
-              name: `${patient.firstName || ""} ${
-                patient.lastName || ""
-              }`.trim(),
-              age: patient.age || "",
-              gender: patient.gender || "",
-              phone: patient.phone || "",
-              aadharnum: `${patient.aadharnum?.toString().padStart(12, "0")}`,
-              department: visit.department,
-              date: visit.date,
-            });
-          }
-        }
-      });
-    }
+    console.log(`📦 Total records from DB: ${results.length}`);
+
+    // ✅ FIX: Filter in memory (faster for date strings)
+    const filteredRows = results.filter((record) => {
+      // Check specialty match (case-insensitive)
+      const visitSpecialty = record.department?.trim().toLowerCase();
+      if (!visitSpecialty || !specialties.includes(visitSpecialty)) {
+        return false;
+      }
+
+      // Check date range
+      if (!record.visitDate) return false;
+      
+      try {
+        const visitDate = parseDDMMYYYY(record.visitDate);
+        visitDate.setHours(0, 0, 0, 0);
+        return visitDate >= fromDate && visitDate <= toDate;
+      } catch (e) {
+        console.error("Date parse error:", record.visitDate, e);
+        return false;
+      }
+    });
+
+    console.log(`✅ Filtered records: ${filteredRows.length}`);
 
     if (filteredRows.length === 0) {
       return res.status(404).json({
-        message: `No patients found for specialties: ${specialties.join(
-          ", "
-        )} between ${dateFrom} and ${dateTo}.`,
+        message: `No patients found for specialties: ${specialties.join(", ")} between ${dateFrom} and ${dateTo}.`,
       });
     }
 
+    // ✅ Generate Excel
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("Specialty Report");
+    const worksheet = workbook.addWorksheet("Disease Master Report");
 
     worksheet.columns = [
       { header: "ID No.", key: "idno", width: 15 },
@@ -1821,9 +2279,10 @@ const exportPatientsBySpeciality = async (req, res) => {
       { header: "Date", key: "date", width: 15 },
     ];
 
+    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true };
+      cell.font = { bold: true, size: 12 };
       cell.fill = {
         type: "pattern",
         pattern: "solid",
@@ -1838,28 +2297,51 @@ const exportPatientsBySpeciality = async (req, res) => {
       };
     });
 
-    filteredRows.forEach((row) => {
-      const added = worksheet.addRow(row);
-      added.eachCell((cell) => {
-        cell.alignment = { horizontal: "center", vertical: "middle" };
-      });
+    // ✅ FIX: Batch add rows (much faster)
+    const rows = filteredRows.map((record) => ({
+      idno: record.idno || "",
+      name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+      age: record.age || "",
+      gender: record.gender || "",
+      phone: record.phone || "",
+      aadharnum: record.aadharnum ? record.aadharnum.toString().padStart(12, "0") : "",
+      department: record.department || "",
+      date: record.visitDate || "",
+    }));
+
+    worksheet.addRows(rows);
+
+    // Center align all data cells
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
+        });
+      }
     });
 
+    console.log("✅ Excel generated successfully");
+
+    // Send response
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=SpecialityReport-${
-        new Date().toISOString().split("T")[0]
-      }.xlsx`
+      `attachment; filename=Disease_Master_Report_${new Date().toISOString().split("T")[0]}.xlsx`
     );
 
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {
-    console.error("Error exporting speciality report:", error.message);
+    console.error("❌ Error exporting disease master report:", error);
     res.status(500).json({
       message: "Failed to export Excel",
       error: error.message,
@@ -1871,26 +2353,110 @@ const exportTherapyReport = async (req, res) => {
   try {
     const { dateFrom, dateTo, selectedTherapy } = req.query;
 
+    console.log("💆 Therapy Report Request:", { dateFrom, dateTo, selectedTherapy });
+
     if (!dateFrom || !dateTo || !selectedTherapy) {
       return res.status(400).json({
         message: "Missing dateFrom, dateTo, or selectedTherapy in query params",
       });
     }
 
-    const fromDate = new Date(dateFrom);
-    const toDate = new Date(dateTo);
-    toDate.setHours(23, 59, 59, 999);
-
+    // Parse therapies (case-insensitive)
     const selectedTherapies = selectedTherapy
       .split(",")
-      .map((t) => t.trim().toLowerCase());
+      .map((t) => t.trim().toLowerCase())
+      .filter(t => t.length > 0);
 
+    if (selectedTherapies.length === 0) {
+      return res.status(400).json({
+        message: "No valid therapies provided",
+      });
+    }
+
+    // Parse dates
     const parseDDMMYYYY = (str) => {
       const [day, month, year] = str.split("/").map(Number);
       return new Date(year, month - 1, day);
     };
 
-    const patients = await patientModel.find();
+    const fromDate = parseDDMMYYYY(dateFrom);
+    const toDate = parseDDMMYYYY(dateTo);
+    toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
+
+    console.log("📅 Date Range:", { fromDate, toDate });
+    console.log("💆 Therapies:", selectedTherapies);
+
+    // ✅ FIX: Single aggregation query with unwind for therapies
+    const results = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits.therapyWithAmount",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          visitDate: "$visits.date",
+          therapyName: "$visits.therapyWithAmount.name",
+          therapyAmount: "$visits.therapyWithAmount.receivedAmount",
+        },
+      },
+    ]);
+
+    console.log(`📦 Total therapy records from DB: ${results.length}`);
+
+    // ✅ FIX: Filter in memory
+    const filteredRows = results.filter((record) => {
+      // Check therapy match (case-insensitive)
+      const therapyName = record.therapyName?.trim().toLowerCase();
+      if (!therapyName || !selectedTherapies.includes(therapyName)) {
+        return false;
+      }
+
+      // Check date range
+      if (!record.visitDate) return false;
+      
+      try {
+        const visitDate = parseDDMMYYYY(record.visitDate);
+        visitDate.setHours(0, 0, 0, 0);
+        return visitDate >= fromDate && visitDate <= toDate;
+      } catch (e) {
+        console.error("Date parse error:", record.visitDate, e);
+        return false;
+      }
+    });
+
+    console.log(`✅ Filtered therapy records: ${filteredRows.length}`);
+
+    if (filteredRows.length === 0) {
+      return res.status(404).json({
+        message: `No patients found for selected therapies: ${selectedTherapies.join(", ")} between ${dateFrom} and ${dateTo}.`,
+      });
+    }
+
+    // ✅ Generate Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Therapy Report");
 
@@ -1906,9 +2472,10 @@ const exportTherapyReport = async (req, res) => {
       { header: "Date", key: "date", width: 15 },
     ];
 
+    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true };
+      cell.font = { bold: true, size: 12 };
       cell.fill = {
         type: "pattern",
         pattern: "solid",
@@ -1923,70 +2490,52 @@ const exportTherapyReport = async (req, res) => {
       };
     });
 
-    let patientCount = 0;
+    // ✅ FIX: Batch add rows
+    const rows = filteredRows.map((record) => ({
+      idno: record.idno || "",
+      name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+      age: record.age || "",
+      gender: record.gender || "",
+      phone: record.phone || "",
+      aadharnum: record.aadharnum ? record.aadharnum.toString().padStart(12, "0") : "",
+      therapyname: record.therapyName || "",
+      therapyamount: Number(record.therapyAmount) || 0,
+      date: record.visitDate || "",
+    }));
 
-    for (const patient of patients) {
-      const visits = await visitModel.find({ patientId: patient._id });
+    worksheet.addRows(rows);
 
-      visits.forEach((visit) => {
-        if (!visit.date || !Array.isArray(visit.therapyWithAmount)) return;
-
-        const visitDate = parseDDMMYYYY(visit.date);
-        if (visitDate < fromDate || visitDate > toDate) return;
-
-        visit.therapyWithAmount.forEach((therapy) => {
-          const therapyName = therapy?.name?.trim().toLowerCase();
-          if (therapyName && selectedTherapies.includes(therapyName)) {
-            worksheet.addRow({
-              idno: patient.idno || "",
-              name: `${patient.firstName || ""} ${
-                patient.lastName || ""
-              }`.trim(),
-              age: patient.age || "",
-              gender: patient.gender || "",
-              phone: patient.phone || "",
-              aadharnum: `${(patient.aadharnum || "")
-                .toString()
-                .padStart(12, "0")}`,
-              therapyname: therapy.name,
-              therapyamount: Number(therapy.receivedAmount) || 0,
-              date: visit.date,
-            });
-            patientCount++;
-          }
+    // Center align all data cells
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
         });
-      });
-    }
-
-    if (patientCount === 0) {
-      return res.status(404).json({
-        message: `No patients found for selected therapies: ${selectedTherapies.join(
-          ", "
-        )}`,
-      });
-    }
-
-    worksheet.eachRow({ includeEmpty: false }, (row) => {
-      row.eachCell((cell) => {
-        cell.alignment = { horizontal: "center", vertical: "middle" };
-      });
+      }
     });
 
+    console.log("✅ Excel generated successfully");
+
+    // Send response
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=Therapy_Report_${
-        new Date().toISOString().split("T")[0]
-      }.xlsx`
+      `attachment; filename=Therapy_Report_${new Date().toISOString().split("T")[0]}.xlsx`
     );
 
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {
-    console.error("Error exporting therapy report:", error);
+    console.error("❌ Error exporting therapy report:", error);
     res.status(500).json({
       message: "Failed to export therapy report",
       error: error.message,
@@ -2002,9 +2551,10 @@ const exportBalanceReport = async (req, res) => {
       return res.status(400).json({ message: "Missing dateFrom or dateTo" });
     }
 
+    // Convert DD/MM/YYYY to Date
     const parseDDMMYYYY = (str) => {
-      const [day, month, year] = str.split("/").map(Number);
-      return new Date(year, month - 1, day);
+      const [d, m, y] = str.split("/").map(Number);
+      return new Date(y, m - 1, d);
     };
 
     const fromDate = parseDDMMYYYY(dateFrom);
@@ -2012,7 +2562,95 @@ const exportBalanceReport = async (req, res) => {
     fromDate.setHours(0, 0, 0, 0);
     toDate.setHours(23, 59, 59, 999);
 
-    const patients = await patientModel.find();
+    // 🔥 Single aggregated query instead of N+1 queries
+    const data = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          phone: 1,
+          visits: {
+            date: 1,
+            balance: 1,
+          },
+        },
+      },
+    ]);
+
+    const rows = [];
+
+    for (const p of data) {
+      const name = `${p.firstName || ""} ${p.lastName || ""}`.trim();
+
+      for (const v of p.visits) {
+        if (!v.date || !v.balance) continue;
+
+        const visitDate = parseDDMMYYYY(v.date);
+        if (visitDate < fromDate || visitDate > toDate) continue;
+
+        const base = {
+          idno: p.idno || "",
+          name,
+          phone: p.phone || "",
+          date: v.date,
+        };
+
+        // Consultation
+        if (Number(v.balance.consultation) > 0) {
+          rows.push({
+            ...base,
+            purpose: "Consultation",
+            amount: v.balance.consultation,
+          });
+        }
+
+        // Prakriti
+        if (Number(v.balance.prakritiparikshan) > 0) {
+          rows.push({
+            ...base,
+            purpose: "Prakriti Parikshan",
+            amount: v.balance.prakritiparikshan,
+          });
+        }
+
+        // Therapies
+        if (Array.isArray(v.balance.therapies)) {
+          for (const t of v.balance.therapies) {
+            if (Number(t.balance) > 0) {
+              rows.push({
+                ...base,
+                purpose: `Therapy - ${t.name}`,
+                amount: t.balance,
+              });
+            }
+          }
+        }
+
+        // Others
+        if (Array.isArray(v.balance.others)) {
+          for (const o of v.balance.others) {
+            if (Number(o.balance) > 0) {
+              rows.push({
+                ...base,
+                purpose: `Others - ${o.purpose}`,
+                amount: o.balance,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 🔥 Excel generation (fast batch insert)
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Balance Report");
 
@@ -2025,14 +2663,14 @@ const exportBalanceReport = async (req, res) => {
       { header: "Date", key: "date", width: 15 },
     ];
 
+    // Add all rows at once (VERY FAST)
+    worksheet.addRows(rows);
+
+    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
       cell.font = { bold: true };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFFDD835" },
-      };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDD835" } };
       cell.alignment = { horizontal: "center", vertical: "middle" };
       cell.border = {
         top: { style: "thin" },
@@ -2040,75 +2678,6 @@ const exportBalanceReport = async (req, res) => {
         left: { style: "thin" },
         right: { style: "thin" },
       };
-    });
-
-    for (const patient of patients) {
-      const visits = await visitModel.find({ patientId: patient._id });
-
-      for (const visit of visits) {
-        if (!visit.date || !visit.balance) continue;
-
-        const visitDate = parseDDMMYYYY(visit.date);
-        if (visitDate < fromDate || visitDate > toDate) continue;
-
-        const commonData = {
-          idno: patient.idno || "",
-          name: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
-          phone: patient.phone || "",
-          date: visit.date,
-        };
-
-        // Consultation
-        if (Number(visit.balance.consultation) > 0) {
-          worksheet.addRow({
-            ...commonData,
-            purpose: "Consultation",
-            amount: visit.balance.consultation,
-          });
-        }
-
-        // Prakriti Parikshan
-        if (Number(visit.balance.prakritiparikshan) > 0) {
-          worksheet.addRow({
-            ...commonData,
-            purpose: "Prakriti Parikshan",
-            amount: visit.balance.prakritiparikshan,
-          });
-        }
-
-        // Therapies
-        if (Array.isArray(visit.balance.therapies)) {
-          for (const therapy of visit.balance.therapies) {
-            if (Number(therapy.balance) > 0) {
-              worksheet.addRow({
-                ...commonData,
-                purpose: `Therapy - ${therapy.name}`,
-                amount: therapy.balance,
-              });
-            }
-          }
-        }
-
-        // Others
-        if (Array.isArray(visit.balance.others)) {
-          for (const other of visit.balance.others) {
-            if (Number(other.balance) > 0) {
-              worksheet.addRow({
-                ...commonData,
-                purpose: `Others - ${other.purpose}`,
-                amount: other.balance,
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // Align all cells left
-    worksheet.eachRow({ includeEmpty: false }, (row) => {
-      row.eachCell((cell) => {
-        cell.alignment = { horizontal: "left", vertical: "middle" };
-      });
     });
 
     res.setHeader(
@@ -2130,6 +2699,7 @@ const exportBalanceReport = async (req, res) => {
     });
   }
 };
+
 const exportSponsorReport = async (req, res) => {
   try {
     const { dateFrom, dateTo, sponsor } = req.query;

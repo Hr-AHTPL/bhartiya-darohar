@@ -237,92 +237,165 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
   };
 
   const handleTherapyReportGenerate = async () => {
-    try {
-      const queryParams = new URLSearchParams({
-        dateFrom: fromDate,
-        dateTo: toDate,
-        selectedTherapy: selectedTherapies.join(","),
-      });
-
-      const response = await fetch(
-        `${API_BASE_URL}/api/website/enquiry/therapy-analysis?${queryParams}`,
-        { method: "GET" }
-      );
-
-      if (!response.ok) {
-        const errorBlob = await response.blob();
-        const text = await errorBlob.text();
-        toast.error(text || "Failed to generate therapy report.");
-        throw new Error("Failed to fetch therapy analysis report");
-      }
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${selectedTherapies.join("_") || "Therapy"}_Report.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-
-      toast.success("Therapy report generated successfully!");
-      setIsTherapyDialogOpen(false);
-    } catch (error) {
-      console.error("Error downloading therapy report:", error);
-      toast.error("Failed to generate therapy report");
+  try {
+    // Validate date selection
+    if (!fromDate || !toDate) {
+      toast.error("Please select both from and to dates");
+      return;
     }
-  };
 
-  const handleSpecialtyReportGenerate = async () => {
-    try {
-      const queryParams = new URLSearchParams({
-        dateFrom: fromDate,
-        dateTo: toDate,
-        selectedSpecialty: selectedSpecialties.join(","),
-      });
+    // Show loading toast
+    const loadingToast = toast.loading("Generating therapy report...");
 
-      const response = await fetch(
-        `${API_BASE_URL}/api/website/enquiry/disease-analysis?${queryParams}`,
-        {
-          method: "GET",
+    const queryParams = new URLSearchParams({
+      dateFrom: fromDate,
+      dateTo: toDate,
+      selectedTherapy: selectedTherapies.join(","),
+    });
+
+    console.log("Requesting therapy report with params:", {
+      dateFrom: fromDate,
+      dateTo: toDate,
+      therapies: selectedTherapies
+    });
+
+    const response = await fetch(
+      `${API_BASE_URL}/api/website/enquiry/therapy-analysis?${queryParams}`,
+      { method: "GET" }
+    );
+
+    // Dismiss loading toast
+    toast.dismiss(loadingToast);
+
+    if (!response.ok) {
+      const contentType = response.headers.get("content-type");
+      let errorMessage = "Failed to generate therapy report";
+      
+      try {
+        if (contentType && contentType.includes("application/json")) {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } else {
+          const textError = await response.text();
+          errorMessage = textError || errorMessage;
         }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        toast.error(
-          errorData.message || "No report found for selected specialty."
-        );
-        return;
+      } catch (e) {
+        console.error("Error parsing error response:", e);
       }
-
-      const blob = await response.blob();
-
-      const formattedSpecialty =
-        selectedSpecialties
-          .map((s) => s.replace(/\s+/g, "_").replace(/[^\w_]/g, ""))
-          .join("_") || "Specialty";
-
-      const fileName = `${formattedSpecialty}_Report_Generated.xlsx`;
-
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-
-      a.remove();
-      window.URL.revokeObjectURL(url);
-
-      toast.success("Disease Master report generated successfully!");
-      setIsSpecialtyDialogOpen(false);
-    } catch (error) {
-      console.error("Error downloading disease analysis report:", error);
-      toast.error("An unexpected error occurred while downloading the report.");
+      
+      toast.error(errorMessage);
+      return;
     }
-  };
+
+    const blob = await response.blob();
+    console.log("Received blob size:", blob.size);
+    
+    if (blob.size === 0) {
+      toast.error("No data found for selected therapies in the given date range");
+      return;
+    }
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Therapy_Report_${selectedTherapies.join("_").substring(0, 50)}_${fromDate}_to_${toDate}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+
+    toast.success("Therapy report generated successfully!");
+    setIsTherapyDialogOpen(false);
+    setSelectedTherapies([]); // Clear selection after successful download
+  } catch (error) {
+    console.error("Error downloading therapy report:", error);
+    toast.error(`Failed to generate therapy report: ${error.message}`);
+  }
+};
+
+const handleSpecialtyReportGenerate = async () => {
+  try {
+    // Validate date selection
+    if (!fromDate || !toDate) {
+      toast.error("Please select both from and to dates");
+      return;
+    }
+
+    // Show loading toast
+    const loadingToast = toast.loading("Generating disease master report...");
+
+    const queryParams = new URLSearchParams({
+      dateFrom: fromDate,
+      dateTo: toDate,
+      selectedSpecialty: selectedSpecialties.join(","),
+    });
+
+    console.log("Requesting disease master report with params:", {
+      dateFrom: fromDate,
+      dateTo: toDate,
+      specialties: selectedSpecialties
+    });
+
+    const response = await fetch(
+      `${API_BASE_URL}/api/website/enquiry/disease-analysis?${queryParams}`,
+      { method: "GET" }
+    );
+
+    // Dismiss loading toast
+    toast.dismiss(loadingToast);
+
+    if (!response.ok) {
+      const contentType = response.headers.get("content-type");
+      let errorMessage = "Failed to generate disease master report";
+      
+      try {
+        if (contentType && contentType.includes("application/json")) {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } else {
+          const textError = await response.text();
+          errorMessage = textError || errorMessage;
+        }
+      } catch (e) {
+        console.error("Error parsing error response:", e);
+      }
+      
+      toast.error(errorMessage);
+      return;
+    }
+
+    const blob = await response.blob();
+    console.log("Received blob size:", blob.size);
+
+    if (blob.size === 0) {
+      toast.error("No data found for selected specialties in the given date range");
+      return;
+    }
+
+    const formattedSpecialty =
+      selectedSpecialties
+        .map((s) => s.replace(/\s+/g, "_").replace(/[^\w_]/g, ""))
+        .join("_") || "Specialty";
+
+    const fileName = `Disease_Master_${formattedSpecialty}_${fromDate}_to_${toDate}.xlsx`;
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+
+    toast.success("Disease Master report generated successfully!");
+    setIsSpecialtyDialogOpen(false);
+    setSelectedSpecialties([]); // Clear selection after successful download
+  } catch (error) {
+    console.error("Error downloading disease analysis report:", error);
+    toast.error(`An unexpected error occurred: ${error.message}`);
+  }
+}; 
 
   const handleGenerate = async (type: string) => {
     console.log("Generating:", type, fromDate, toDate);
@@ -523,61 +596,81 @@ const [patientNameFilter, setPatientNameFilter] = useState("");
         console.error("Error downloading Consultation analysis report:", error);
         toast.error("Failed to generate Consultation report");
       }
-    } else if (type === "Medicine Stock Report") {
-      toast.info(`Generating ${stockType || "Medicine Stock"} report...`);
-      if (stockType == "Running Stock") {
-        try {
-          const response = await fetch(
-            `${API_BASE_URL}/api/website/enquiry/current-stock`,
-            {
-              method: "GET",
-            }
-          );
+    } // Replace the Medicine Stock Report section in handleGenerate function
 
-          if (!response.ok)
-            throw new Error("Failed to fetch current stock report");
+else if (type === "Medicine Stock Report") {
+  // Validate dates first
+  if (!fromDate || !toDate) {
+    toast.error("Please select both from and to dates for stock report");
+    return;
+  }
 
-          const blob = await response.blob();
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "RunningStock.xlsx";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(url);
-          toast.success("Running Stock report generated successfully!");
-        } catch (error) {
-          console.error("Error downloading current stock report:", error);
-          toast.error("Failed to generate Running Stock report");
+  if (!stockType) {
+    toast.error("Please select a stock type (Running Stock or Low Stock)");
+    return;
+  }
+
+  toast.info(`Generating ${stockType} report...`);
+  
+  // Create query params with dates
+  const stockQueryParams = new URLSearchParams({
+    dateFrom: fromDate,
+    dateTo: toDate,
+  });
+
+  // ✅ FIX: Use the correct endpoints that accept dates
+  if (stockType === "Running Stock") {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/website/enquiry/medicine-stock?${stockQueryParams}`,  // ✅ CORRECT ENDPOINT
+        {
+          method: "GET",
         }
-      } else if (stockType == "Low Stock") {
-        try {
-          const response = await fetch(
-            `${API_BASE_URL}/api/website/enquiry/low-stock`,
-            {
-              method: "GET",
-            }
-          );
+      );
 
-          if (!response.ok) throw new Error("Failed to fetch low stock report");
+      if (!response.ok) throw new Error("Failed to fetch medicine stock report");
 
-          const blob = await response.blob();
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "LowStock.xlsx";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(url);
-          toast.success("Low Stock report generated successfully!");
-        } catch (error) {
-          console.error("Error downloading low stock report:", error);
-          toast.error("Failed to generate Low Stock report");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `RunningStock_${fromDate}_to_${toDate}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Running Stock report generated successfully!");
+    } catch (error) {
+      console.error("Error downloading medicine stock report:", error);
+      toast.error("Failed to generate Running Stock report");
+    }
+  } else if (stockType === "Low Stock") {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/website/enquiry/low-stock-report?${stockQueryParams}`,  // ✅ CORRECT ENDPOINT
+        {
+          method: "GET",
         }
-      }
-    } // Replace the "Purchase Records" section in your handleGenerate function with this:
+      );
+
+      if (!response.ok) throw new Error("Failed to fetch low stock report");
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `LowStock_${fromDate}_to_${toDate}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Low Stock report generated successfully!");
+    } catch (error) {
+      console.error("Error downloading low stock report:", error);
+      toast.error("Failed to generate Low Stock report");
+    }
+  }
+} // Replace the "Purchase Records" section in your handleGenerate function with this:
 
 else if (type === "Purchase Records") {
   try {

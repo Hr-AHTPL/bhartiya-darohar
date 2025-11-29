@@ -5,6 +5,7 @@ import { handleError, handleSuccess } from '@/utils';
 import { Heart, Lock, Mail, User, Sparkles } from 'lucide-react';
 import API_BASE_URL from "@/config/api.config";
 
+
 function Signup() {
     const [signupInfo, setSignupInfo] = useState({
         name: '',

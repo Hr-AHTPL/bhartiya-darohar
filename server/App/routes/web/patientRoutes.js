@@ -4,7 +4,6 @@ const {
   patientList,
   getLastPatient,
   exportLastPatientToExcel,
-  exportLastPatientToPDF,
   exportPrescriptionFormToExcel,
   exportPrakritiCashReceipt,
   exportPatientMaster,
@@ -49,8 +48,13 @@ patientRouter.get("/patient-billing-master", exportPatientBillingMaster);
 patientRouter.get("/revenue-report", exportRevenueReport);
 patientRouter.get("/patient-visits/:idno", getVisitsByPatientId);
 patientRouter.get("/patient-last-visit/:idno", getLastVisit);
-patientRouter.get("/current-stock", exportMedicineStock);
-patientRouter.get("/low-stock", exportLowStock);
+
+// ✅ STOCK REPORTS - These both accept dateFrom and dateTo query params
+patientRouter.get("/current-stock", exportMedicineStock);      // Works with or without dates
+patientRouter.get("/medicine-stock", exportMedicineStock);     // ✅ ADD THIS - Same function, clearer name
+patientRouter.get("/low-stock", exportLowStock);               // Works with or without dates
+patientRouter.get("/low-stock-report", exportLowStock);        // ✅ ADD THIS - Same function, clearer name
+
 patientRouter.get("/prakriti-analysis", exportPrakritiParikshanPatients);
 patientRouter.get("/consultation-analysis", exportConsultationPatients);
 patientRouter.get("/disease-analysis", exportPatientsBySpeciality);
@@ -59,7 +63,6 @@ patientRouter.get("/patient-wise-report", exportPatientBillingById);
 patientRouter.get("/balance-report", exportBalanceReport);
 patientRouter.get("/sponsor-report", exportSponsorReport);
 patientRouter.get("/discount-report", exportDiscountWiseReport);
-patientRouter.post("/import-bulk", importBulkPatientData); // Assuming this function is defined in the controller
-
+patientRouter.post("/import-bulk", importBulkPatientData);
 
 module.exports = patientRouter;

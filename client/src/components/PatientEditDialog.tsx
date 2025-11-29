@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { User, Phone, MapPin, Edit, X, Save } from "lucide-react";
+import API_BASE_URL from "@/config/api.config";
 
 interface Patient {
   id: string;
@@ -79,7 +80,7 @@ export default function PatientEditDialog({
         setIsLoading(true);
         try {
           const response = await fetch(
-            "https://bhartiyadharohar.in/api/website/enquiry/view"
+            "${API_BASE_URL}/api/website/enquiry/view"
           );
           const data = await response.json();
           

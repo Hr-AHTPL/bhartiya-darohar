@@ -1,20 +1,3 @@
-# Root .gitignore (if you have one)
-node_modules/
-.env
-.DS_Store
-*.log
-
-# Server .gitignore (server/.gitignore)
-node_modules/
-.env
-.env.local
-.env.production
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Client .gitignore (client/.gitignore)
 # Logs
 logs
 *.log
@@ -29,11 +12,6 @@ dist
 dist-ssr
 *.local
 
-# Environment files
-.env
-.env.local
-.env.production
-
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -44,6 +22,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Build files
-build/

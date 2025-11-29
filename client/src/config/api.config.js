@@ -1,6 +1,4 @@
 // client/src/config/api.config.js
-// Create this file to centralize API configuration
-
 const getApiBaseUrl = () => {
   // Check if running in development
   if (import.meta.env.DEV) {

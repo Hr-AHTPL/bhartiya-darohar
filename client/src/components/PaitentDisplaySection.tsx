@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePagination } from "@/hooks/usePagination";
 import { PatientPagination } from "./PatientPagination";
 import { useEffect } from "react";
+import API_BASE_URL from "@/config/api.config";
 
 interface PatientDisplaySectionProps {
   isLoading: boolean;

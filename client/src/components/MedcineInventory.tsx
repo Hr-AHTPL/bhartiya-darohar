@@ -9,6 +9,7 @@ import ExcelJS from "exceljs";
 import { saveAs } from "file-saver";
 import { Textarea } from "@/components/ui/textarea";
 import debounce from "lodash.debounce";
+import API_BASE_URL from "@/config/api.config";
 import {
   Table,
   TableBody,
@@ -41,7 +42,6 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import PurchaseForm from "./PurchaseForm";
-import API_BASE_URL from "@/config/api.config";
 
 interface Medicine {
   id: string;
@@ -712,8 +712,8 @@ const handleUpdateClosingStock = async () => {
   const getNextInvoiceNumber = () => {
     const lastInvoice = localStorage.getItem("lastInvoiceNumber");
     const next = lastInvoice ? parseInt(lastInvoice) + 1 : 1001;
-    localStorage.setItem("lastInvoiceNumber", next.toString()); // ✅ convert to string
-    return next;
+    localStorage.setItem("lastInvoiceNumber", next.toString());
+    return `BD/2025-26/${next}`; // ✅ Return with prefix
   };
 
   const generateExcelReceipt = async (sale) => {

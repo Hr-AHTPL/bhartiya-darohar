@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import React, { useState } from "react";
 import { handleError, handleSuccess } from "@/utils";
 import { Heart, Lock, Mail, Sparkles } from "lucide-react";
+import API_BASE_URL from "@/config/api.config";
 
 function Login() {
   const [loginInfo, setLoginInfo] = useState({
@@ -25,7 +26,7 @@ function Login() {
       return handleError("Email & Password are required");
     }
     try {
-      const url = "https://bhartiyadharohar.in/auth/login";
+      const url = `${API_BASE_URL}/auth/login`;
       // const url = "https://bhartiya-darohar-backend.onrender.com/auth/login";
       const response = await fetch(url, {
         method: "POST",

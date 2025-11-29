@@ -186,7 +186,7 @@ const PatientForm = () => {
       const submitData = rawData;
 
       await axios.post(
-        `h${API_BASE_URL}/api/website/enquiry/insert`,
+        "${API_BASE_URL}/api/website/enquiry/insert",
         submitData 
       );
       toast({

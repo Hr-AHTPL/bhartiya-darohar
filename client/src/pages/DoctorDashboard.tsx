@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import * as XLSX from "xlsx-js-style";
 import { toast } from "sonner";
+import API_BASE_URL from "@/config/api.config";
 import {
   Dialog,
   DialogContent,
@@ -32,7 +33,6 @@ import { useNavigate } from "react-router-dom";
 import AutoSuggestInput from "@/components/AutoSuggestInput";
 import MedicineForm, { Medicine } from "@/components/MedicineForm";
 import { PatientDisplaySection } from "@/components/PaitentDisplaySection";
-import API_BASE_URL from "@/config/api.config";
 
 // Local therapies data
 const therapiesData = [
