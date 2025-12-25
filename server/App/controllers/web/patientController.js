@@ -1332,75 +1332,103 @@ const exportRevenueReport = async (req, res) => {
       return new Date(year, month - 1, day);
     };
 
-    // ✅ OPTIMIZED: Fetch all patients IDs only
-    const patients = await patientModel.find().select('_id').lean();
-    const patientIds = patients.map(p => p._id);
+    // ----------------- 1. Fetch ALL visits at once (OPTIMIZED) -----------------
+    const allVisits = await visitModel.find().lean(); // ✅ Single query with lean()
 
-    // ✅ OPTIMIZED: Fetch all visits in ONE query
-    const allVisits = await visitModel.find({ 
-      patientId: { $in: patientIds }
-    }).lean();
-
-    // Filter and calculate from visits
     let consultationSum = 0;
     let therapySum = 0;
     let otherServicesSum = 0;
+    let consultationCount = 0;
+    let therapyCount = 0;
+    let prakritiCount = 0;
 
+    // ✅ Process all visits in a single loop
     allVisits.forEach((visit) => {
       if (!visit.date) return;
-      
-      const visitDate = parseDDMMYYYY(visit.date);
-      if (visitDate >= fromDate && visitDate <= toDate) {
-        consultationSum += Number(visit.consultationamount || 0);
-        otherServicesSum += Number(visit.prakritiparikshanamount || 0);
 
-        if (Array.isArray(visit.therapyWithAmount)) {
-          therapySum += visit.therapyWithAmount.reduce(
-            (sum, t) => sum + Number(t.receivedAmount || 0),
-            0
-          );
+      try {
+        const visitDate = parseDDMMYYYY(visit.date);
+        
+        // ✅ Check if date is valid
+        if (isNaN(visitDate.getTime())) return;
+        
+        if (visitDate >= fromDate && visitDate <= toDate) {
+          // Consultation
+          const consultationAmount = Number(visit.consultationamount || 0);
+          if (consultationAmount > 0) {
+            consultationSum += consultationAmount;
+            consultationCount++;
+          }
+
+          // Prakriti Parikshan
+          const prakritiAmount = Number(visit.prakritiparikshanamount || 0);
+          if (prakritiAmount > 0) {
+            otherServicesSum += prakritiAmount;
+            prakritiCount++;
+          }
+
+          // Therapy - count each therapy separately
+          if (Array.isArray(visit.therapyWithAmount)) {
+            visit.therapyWithAmount.forEach((therapy) => {
+              const amount = Number(therapy.receivedAmount || 0);
+              if (amount > 0) {
+                therapySum += amount;
+                therapyCount++;
+              }
+            });
+          }
         }
+      } catch (err) {
+        console.error(`Error parsing date for visit ${visit._id}:`, visit.date, err.message);
       }
     });
 
-    // ✅ OPTIMIZED: Fetch sales in ONE query with date filter
-    const sales = await saleModel.find({
-      saleDate: {
-        $gte: dateFrom,
-        $lte: dateTo
-      }
-    }).lean();
+    // ----------------- 2. Fetch medicine sales -----------------
+    // ✅ Fetch all sales first, then filter (in case saleDate format is inconsistent)
+    const sales = await saleModel.find().lean();
 
-    const medicineSum = sales.reduce(
+    const filteredSales = sales.filter((sale) => {
+      if (!sale.saleDate) return false;
+      const saleDate = new Date(sale.saleDate);
+      return !isNaN(saleDate.getTime()) && saleDate >= fromDate && saleDate <= toDate;
+    });
+
+    const medicineSum = filteredSales.reduce(
       (sum, sale) => sum + Number(sale.totalAmount || 0),
       0
     );
+    const medicineCount = filteredSales.length;
 
     const totalRevenue =
       consultationSum + therapySum + otherServicesSum + medicineSum;
 
-    // Generate Excel
+    // ----------------- 3. Generate Excel -----------------
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Revenue Report");
 
     worksheet.getColumn(1).width = 10;
     worksheet.getColumn(2).width = 35;
     worksheet.getColumn(3).width = 20;
+    worksheet.getColumn(4).width = 20;
 
-    worksheet.mergeCells("B1:C1");
+    // Title row
+    worksheet.mergeCells("B1:D1");
     const titleCell = worksheet.getCell("B1");
     titleCell.value = `Revenue Report (${dateFrom} to ${dateTo})`;
     titleCell.font = { bold: true, size: 14, underline: true };
     titleCell.alignment = { horizontal: "center", vertical: "middle" };
 
-    worksheet.addRow(["S.NO", "Source of Income", "Amount (INR)"]);
-    worksheet.addRow(["1", "Consultation Fees", consultationSum]);
-    worksheet.addRow(["2", "Medicine Sales", medicineSum]);
-    worksheet.addRow(["3", "Panchakarma Treatments", therapySum]);
-    worksheet.addRow(["4", "Prakriti Parikshans", otherServicesSum]);
-    worksheet.addRow(["", "Total Revenue", totalRevenue]);
+    // Add header row
+    const headerRow = worksheet.addRow(["S.NO", "Source of Income", "No. Of Count", "Amount (INR)"]);
+    
+    // Add data rows
+    worksheet.addRow(["1", "Consultation Fees", consultationCount, consultationSum]);
+    worksheet.addRow(["2", "Medicine Sales", medicineCount, medicineSum]);
+    worksheet.addRow(["3", "Panchakarma Treatments", therapyCount, therapySum]);
+    worksheet.addRow(["4", "Prakriti Parikshans", prakritiCount, otherServicesSum]);
+    worksheet.addRow(["", "Total Revenue", "", totalRevenue]);
 
-    const headerRow = worksheet.getRow(2);
+    // Style header row
     headerRow.eachCell((cell) => {
       cell.font = { bold: true };
       cell.fill = {
@@ -1417,6 +1445,7 @@ const exportRevenueReport = async (req, res) => {
       cell.alignment = { horizontal: "center" };
     });
 
+    // Add borders to all data rows
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
       if (rowNumber > 2) {
         row.eachCell((cell) => {
@@ -1426,8 +1455,17 @@ const exportRevenueReport = async (req, res) => {
             left: { style: "thin" },
             right: { style: "thin" },
           };
+          if (cell.col === 3 || cell.col === 4) {
+            cell.alignment = { horizontal: "center" };
+          }
         });
       }
+    });
+
+    // Bold the total row
+    const totalRow = worksheet.lastRow;
+    totalRow.eachCell((cell) => {
+      cell.font = { bold: true };
     });
 
     res.setHeader(
