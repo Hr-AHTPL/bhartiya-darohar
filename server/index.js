@@ -13,6 +13,19 @@ const closingStockRouter = require('./App/routes/web/closingRoute');
 let app = express();
 require('dotenv').config();
 
+
+app.use(cors({
+  origin: [
+    'https://bhartiyadharohar.in',
+    'https://www.bhartiyadharohar.in',
+    'http://localhost:5173',
+    'http://localhost:3000'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
  
 app.use(express.json());
 app.use(bodyParser.json())
@@ -27,17 +40,6 @@ app.use('/api/sale', salesRouter);
 app.use('/api/purchase', purchaseRouter);
 app.use('/api/closing-stock', closingStockRouter);
 
-app.use(cors({
-  origin: [
-    'https://bhartiyadharohar.in',
-    'https://www.bhartiyadharohar.in',
-    'http://localhost:5173',
-    'http://localhost:3000'
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
 // connect to mongoDB
 mongoose.connect(process.env.DBURL).then(()=>{
     console.log('connected to mongodb');
