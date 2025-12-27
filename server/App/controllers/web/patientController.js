@@ -2226,21 +2226,40 @@ const exportPatientsBySpeciality = async (req, res) => {
       });
     }
 
-    // Parse dates
-    const parseDDMMYYYY = (str) => {
-      const [day, month, year] = str.split("/").map(Number);
-      return new Date(year, month - 1, day);
+    // ✅ FIX: Universal date parser that handles BOTH formats
+    const parseDate = (str) => {
+      if (!str) return null;
+      
+      // Handle DD/MM/YYYY format
+      if (str.includes("/")) {
+        const [day, month, year] = str.split("/").map(Number);
+        return new Date(year, month - 1, day);
+      }
+      
+      // Handle YYYY-MM-DD format (from frontend)
+      if (str.includes("-")) {
+        return new Date(str);
+      }
+      
+      return null;
     };
 
-    const fromDate = parseDDMMYYYY(dateFrom);
-    const toDate = parseDDMMYYYY(dateTo);
+    const fromDate = parseDate(dateFrom);
+    const toDate = parseDate(dateTo);
+    
+    if (!fromDate || !toDate || isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+      return res.status(400).json({
+        message: "Invalid date format. Please use YYYY-MM-DD or DD/MM/YYYY",
+      });
+    }
+    
     toDate.setHours(23, 59, 59, 999);
     fromDate.setHours(0, 0, 0, 0);
 
-    console.log("📅 Date Range:", { fromDate, toDate });
-    console.log("🏥 Specialties:", specialties);
+    console.log("📅 Parsed Date Range:", { fromDate, toDate });
+    console.log("🥼 Looking for specialties:", specialties);
 
-    // ✅ FIX: Single aggregation query instead of N+1 queries
+    // Single aggregation query
     const results = await patientModel.aggregate([
       {
         $lookup: {
@@ -2273,23 +2292,36 @@ const exportPatientsBySpeciality = async (req, res) => {
 
     console.log(`📦 Total records from DB: ${results.length}`);
 
-    // ✅ FIX: Filter in memory (faster for date strings)
+    // ✅ FIX: Parse visit dates with same universal parser
     const filteredRows = results.filter((record) => {
       // Check specialty match (case-insensitive)
       const visitSpecialty = record.department?.trim().toLowerCase();
-      if (!visitSpecialty || !specialties.includes(visitSpecialty)) {
+      if (!visitSpecialty) {
+        console.log("⚠️ Record missing department:", record.idno);
+        return false;
+      }
+      
+      if (!specialties.includes(visitSpecialty)) {
         return false;
       }
 
       // Check date range
-      if (!record.visitDate) return false;
+      if (!record.visitDate) {
+        console.log("⚠️ Record missing visit date:", record.idno);
+        return false;
+      }
       
       try {
-        const visitDate = parseDDMMYYYY(record.visitDate);
+        const visitDate = parseDate(record.visitDate);
+        if (!visitDate || isNaN(visitDate.getTime())) {
+          console.log("⚠️ Invalid visit date format:", record.visitDate);
+          return false;
+        }
+        
         visitDate.setHours(0, 0, 0, 0);
         return visitDate >= fromDate && visitDate <= toDate;
       } catch (e) {
-        console.error("Date parse error:", record.visitDate, e);
+        console.error("❌ Date parse error:", record.visitDate, e);
         return false;
       }
     });
@@ -2298,11 +2330,11 @@ const exportPatientsBySpeciality = async (req, res) => {
 
     if (filteredRows.length === 0) {
       return res.status(404).json({
-        message: `No patients found for specialties: ${specialties.join(", ")} between ${dateFrom} and ${dateTo}.`,
+        message: `No patients found for selected specialties between ${dateFrom} and ${dateTo}.`,
       });
     }
 
-    // ✅ Generate Excel
+    // Generate Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Disease Master Report");
 
@@ -2335,7 +2367,7 @@ const exportPatientsBySpeciality = async (req, res) => {
       };
     });
 
-    // ✅ FIX: Batch add rows (much faster)
+    // Add rows
     const rows = filteredRows.map((record) => ({
       idno: record.idno || "",
       name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
@@ -2349,7 +2381,7 @@ const exportPatientsBySpeciality = async (req, res) => {
 
     worksheet.addRows(rows);
 
-    // Center align all data cells
+    // Center align data
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber > 1) {
         row.eachCell((cell) => {
@@ -2366,7 +2398,6 @@ const exportPatientsBySpeciality = async (req, res) => {
 
     console.log("✅ Excel generated successfully");
 
-    // Send response
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -2411,21 +2442,40 @@ const exportTherapyReport = async (req, res) => {
       });
     }
 
-    // Parse dates
-    const parseDDMMYYYY = (str) => {
-      const [day, month, year] = str.split("/").map(Number);
-      return new Date(year, month - 1, day);
+    // ✅ FIX: Universal date parser that handles BOTH formats
+    const parseDate = (str) => {
+      if (!str) return null;
+      
+      // Handle DD/MM/YYYY format
+      if (str.includes("/")) {
+        const [day, month, year] = str.split("/").map(Number);
+        return new Date(year, month - 1, day);
+      }
+      
+      // Handle YYYY-MM-DD format (from frontend)
+      if (str.includes("-")) {
+        return new Date(str);
+      }
+      
+      return null;
     };
 
-    const fromDate = parseDDMMYYYY(dateFrom);
-    const toDate = parseDDMMYYYY(dateTo);
+    const fromDate = parseDate(dateFrom);
+    const toDate = parseDate(dateTo);
+    
+    if (!fromDate || !toDate || isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+      return res.status(400).json({
+        message: "Invalid date format. Please use YYYY-MM-DD or DD/MM/YYYY",
+      });
+    }
+    
     toDate.setHours(23, 59, 59, 999);
     fromDate.setHours(0, 0, 0, 0);
 
-    console.log("📅 Date Range:", { fromDate, toDate });
-    console.log("💆 Therapies:", selectedTherapies);
+    console.log("📅 Parsed Date Range:", { fromDate, toDate });
+    console.log("💆 Looking for therapies:", selectedTherapies);
 
-    // ✅ FIX: Single aggregation query with unwind for therapies
+    // Single aggregation query
     const results = await patientModel.aggregate([
       {
         $lookup: {
@@ -2465,23 +2515,36 @@ const exportTherapyReport = async (req, res) => {
 
     console.log(`📦 Total therapy records from DB: ${results.length}`);
 
-    // ✅ FIX: Filter in memory
+    // ✅ FIX: Parse visit dates with same universal parser
     const filteredRows = results.filter((record) => {
       // Check therapy match (case-insensitive)
       const therapyName = record.therapyName?.trim().toLowerCase();
-      if (!therapyName || !selectedTherapies.includes(therapyName)) {
+      if (!therapyName) {
+        console.log("⚠️ Record missing therapy name:", record.idno);
+        return false;
+      }
+      
+      if (!selectedTherapies.includes(therapyName)) {
         return false;
       }
 
       // Check date range
-      if (!record.visitDate) return false;
+      if (!record.visitDate) {
+        console.log("⚠️ Record missing visit date:", record.idno);
+        return false;
+      }
       
       try {
-        const visitDate = parseDDMMYYYY(record.visitDate);
+        const visitDate = parseDate(record.visitDate);
+        if (!visitDate || isNaN(visitDate.getTime())) {
+          console.log("⚠️ Invalid visit date format:", record.visitDate);
+          return false;
+        }
+        
         visitDate.setHours(0, 0, 0, 0);
         return visitDate >= fromDate && visitDate <= toDate;
       } catch (e) {
-        console.error("Date parse error:", record.visitDate, e);
+        console.error("❌ Date parse error:", record.visitDate, e);
         return false;
       }
     });
@@ -2490,11 +2553,11 @@ const exportTherapyReport = async (req, res) => {
 
     if (filteredRows.length === 0) {
       return res.status(404).json({
-        message: `No patients found for selected therapies: ${selectedTherapies.join(", ")} between ${dateFrom} and ${dateTo}.`,
+        message: `No patients found for selected therapies between ${dateFrom} and ${dateTo}.`,
       });
     }
 
-    // ✅ Generate Excel
+    // Generate Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Therapy Report");
 
@@ -2528,7 +2591,7 @@ const exportTherapyReport = async (req, res) => {
       };
     });
 
-    // ✅ FIX: Batch add rows
+    // Add rows
     const rows = filteredRows.map((record) => ({
       idno: record.idno || "",
       name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
@@ -2543,7 +2606,7 @@ const exportTherapyReport = async (req, res) => {
 
     worksheet.addRows(rows);
 
-    // Center align all data cells
+    // Center align data
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber > 1) {
         row.eachCell((cell) => {
@@ -2560,7 +2623,6 @@ const exportTherapyReport = async (req, res) => {
 
     console.log("✅ Excel generated successfully");
 
-    // Send response
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
