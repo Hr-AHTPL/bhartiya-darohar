@@ -790,7 +790,7 @@ else if (type === "Sales Records") {
     toast.info("Generating sales report...");
 
     const response = await fetch(
-      `${API_BASE_URL}/api/sales/report?${salesParams}`,
+      `${API_BASE_URL}/api/sale/report?${salesParams}`,
       {
         method: "GET",
       }
