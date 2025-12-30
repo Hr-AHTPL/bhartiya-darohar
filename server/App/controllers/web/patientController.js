@@ -1353,21 +1353,21 @@ const exportRevenueReport = async (req, res) => {
         if (isNaN(visitDate.getTime())) return;
         
         if (visitDate >= fromDate && visitDate <= toDate) {
-          // Consultation
+          // Consultation - Store raw amounts first, round only for display
           const consultationAmount = Number(visit.consultationamount || 0);
           if (consultationAmount > 0) {
             consultationSum += consultationAmount;
             consultationCount++;
           }
 
-          // Prakriti Parikshan
+          // Prakriti Parikshan - Store raw amounts first
           const prakritiAmount = Number(visit.prakritiparikshanamount || 0);
           if (prakritiAmount > 0) {
             otherServicesSum += prakritiAmount;
             prakritiCount++;
           }
 
-          // Therapy - count each therapy separately
+          // Therapy - count each therapy separately - Store raw amounts
           if (Array.isArray(visit.therapyWithAmount)) {
             visit.therapyWithAmount.forEach((therapy) => {
               const amount = Number(therapy.receivedAmount || 0);
@@ -1384,7 +1384,6 @@ const exportRevenueReport = async (req, res) => {
     });
 
     // ----------------- 2. Fetch medicine sales -----------------
-    // ✅ Fetch all sales first, then filter (in case saleDate format is inconsistent)
     const sales = await saleModel.find().lean();
 
     const filteredSales = sales.filter((sale) => {
@@ -1393,14 +1392,24 @@ const exportRevenueReport = async (req, res) => {
       return !isNaN(saleDate.getTime()) && saleDate >= fromDate && saleDate <= toDate;
     });
 
+    // ✅ Round medicine sales - sum accurate amounts first, then round
     const medicineSum = filteredSales.reduce(
       (sum, sale) => sum + Number(sale.totalAmount || 0),
       0
     );
     const medicineCount = filteredSales.length;
 
-    const totalRevenue =
-      consultationSum + therapySum + otherServicesSum + medicineSum;
+    // ✅ Calculate totals with accurate data, round only for display
+    const totalRevenue = consultationSum + therapySum + otherServicesSum + medicineSum;
+
+    // Round all values for display
+    const displayValues = {
+      consultationSum: Math.round(consultationSum),
+      therapySum: Math.round(therapySum),
+      otherServicesSum: Math.round(otherServicesSum),
+      medicineSum: Math.round(medicineSum),
+      totalRevenue: Math.round(totalRevenue)
+    };
 
     // ----------------- 3. Generate Excel -----------------
     const workbook = new ExcelJS.Workbook();
@@ -1419,30 +1428,26 @@ const exportRevenueReport = async (req, res) => {
     titleCell.alignment = { horizontal: "center", vertical: "middle" };
 
     // Add header row
-    const headerRow = worksheet.addRow(["S.NO", "Source of Income", "No. Of Count", "Amount (INR)"]);
+    const headerRow = worksheet.addRow(["S.NO", "Source of Income", "No. Of Count", "Amount (₹)"]);
     
-    // Add data rows
-    worksheet.addRow(["1", "Consultation Fees", consultationCount, consultationSum]);
-    worksheet.addRow(["2", "Medicine Sales", medicineCount, medicineSum]);
-    worksheet.addRow(["3", "Panchakarma Treatments", therapyCount, therapySum]);
-    worksheet.addRow(["4", "Prakriti Parikshans", prakritiCount, otherServicesSum]);
-    worksheet.addRow(["", "Total Revenue", "", totalRevenue]);
+    // Add data rows - ✅ Use rounded display values
+    worksheet.addRow(["1", "Consultation Fees", consultationCount, displayValues.consultationSum]);
+    worksheet.addRow(["2", "Medicine Sales", medicineCount, displayValues.medicineSum]);
+    worksheet.addRow(["3", "Panchakarma Treatments", therapyCount, displayValues.therapySum]);
+    worksheet.addRow(["4", "Prakriti Parikshans", prakritiCount, displayValues.otherServicesSum]);
+    worksheet.addRow(["", "Total Revenue", "", displayValues.totalRevenue]);
 
     // Style header row
     headerRow.eachCell((cell) => {
       cell.font = { bold: true };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFCCE5FF" },
-      };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFCCE5FF" } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
       cell.border = {
         top: { style: "thin" },
         bottom: { style: "thin" },
         left: { style: "thin" },
         right: { style: "thin" },
       };
-      cell.alignment = { horizontal: "center" };
     });
 
     // Add borders to all data rows
