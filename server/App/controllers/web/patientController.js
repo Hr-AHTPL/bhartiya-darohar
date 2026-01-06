@@ -506,18 +506,19 @@ const exportLastPatientToExcel = async (req, res) => {
     }
 
     // Set response headers
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=exported_patient.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    // Stream workbook directly to response
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=exported_patient.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (err) {
     console.error("Error exporting last patient:", err);
     res.status(500).json({
@@ -995,17 +996,19 @@ const exportPatientMaster = async (req, res) => {
 
     worksheet.addRows(rows);
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=PatientMaster.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=PatientMaster.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting patient master:", error.message);
     res.status(500).json({ 
@@ -1150,17 +1153,19 @@ const exportPatientBillingMaster = async (req, res) => {
 
     worksheet.addRows(rows);
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=PatientSummary.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=PatientSummary.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting patient Summary:", error.message);
     res.status(500).json({
@@ -1279,17 +1284,19 @@ const exportPatientBillingById = async (req, res) => {
     });
 
     // Set response headers
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=PatientBilling_${patientId}.xlsx`
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  `attachment; filename=PatientBilling_${patientId}.xlsx`
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting patient billing by ID:", error.message);
     res.status(500).json({
@@ -1473,17 +1480,19 @@ const exportRevenueReport = async (req, res) => {
       cell.font = { bold: true };
     });
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=RevenueReport.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=RevenueReport.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting revenue report:", error);
     res
@@ -1690,17 +1699,19 @@ const exportMedicineStock = async (req, res) => {
       });
     });
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=MedicineStockReport.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=MedicineStockReport.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error generating medicine stock report:", error.message);
     res.status(500).json({
@@ -1915,17 +1926,19 @@ const exportLowStock = async (req, res) => {
       });
     });
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=LowStockAlert.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=LowStockAlert.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error generating low stock report:", error.message);
     res.status(500).json({
@@ -2043,17 +2056,19 @@ const exportPrakritiParikshanPatients = async (req, res) => {
 
     worksheet.addRows(rows);
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=PrakritiParikshanPatients.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=PrakritiParikshanPatients.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting prakriti parikshan patients:", error.message);
     res.status(500).json({
@@ -2188,17 +2203,19 @@ const exportConsultationPatients = async (req, res) => {
       }
     });
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=ConsultationPatients.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=ConsultationPatients.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting consultation patients:", error.message);
     res.status(500).json({
@@ -2403,17 +2420,19 @@ const exportPatientsBySpeciality = async (req, res) => {
 
     console.log("✅ Excel generated successfully");
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=Disease_Master_Report_${new Date().toISOString().split("T")[0]}.xlsx`
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  `attachment; filename=Disease_Master_Report_${new Date().toISOString().split("T")[0]}.xlsx`
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("❌ Error exporting disease master report:", error);
     res.status(500).json({
@@ -2628,17 +2647,19 @@ const exportTherapyReport = async (req, res) => {
 
     console.log("✅ Excel generated successfully");
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=Therapy_Report_${new Date().toISOString().split("T")[0]}.xlsx`
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  `attachment; filename=Therapy_Report_${new Date().toISOString().split("T")[0]}.xlsx`
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("❌ Error exporting therapy report:", error);
     res.status(500).json({
@@ -2785,17 +2806,19 @@ const exportBalanceReport = async (req, res) => {
       };
     });
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=Balance_Report.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=Balance_Report.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting balance report:", error);
     res.status(500).json({
@@ -2888,17 +2911,19 @@ const exportSponsorReport = async (req, res) => {
       }
     }
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=Sponsor_Report.xlsx"
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=Sponsor_Report.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting sponsor report:", error);
     res.status(500).json({
@@ -3021,17 +3046,19 @@ const exportDiscountWiseReport = async (req, res) => {
       }
     }
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=Discount_Report_All.xlsx`
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    await workbook.xlsx.write(res);
-    res.end();
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=Discount_Report_All.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
   } catch (error) {
     console.error("Error exporting discount-wise report:", error);
     res.status(500).json({
