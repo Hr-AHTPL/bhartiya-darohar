@@ -2466,11 +2466,11 @@ const exportTherapyReport = async (req, res) => {
       });
     }
 
-    // ✅ FIX: Universal date parser that handles BOTH formats
+    // ✅ FIXED: Universal date parser that handles BOTH formats
     const parseDate = (str) => {
       if (!str) return null;
       
-      // Handle DD/MM/YYYY format
+      // Handle DD/MM/YYYY format (from database)
       if (str.includes("/")) {
         const [day, month, year] = str.split("/").map(Number);
         return new Date(year, month - 1, day);
@@ -2539,7 +2539,7 @@ const exportTherapyReport = async (req, res) => {
 
     console.log(`📦 Total therapy records from DB: ${results.length}`);
 
-    // ✅ FIX: Parse visit dates with same universal parser
+    // ✅ FIXED: Parse visit dates with universal parser
     const filteredRows = results.filter((record) => {
       // Check therapy match (case-insensitive)
       const therapyName = record.therapyName?.trim().toLowerCase();
@@ -2649,21 +2649,21 @@ const exportTherapyReport = async (req, res) => {
 
     const buffer = await workbook.xlsx.writeBuffer();
 
-res.setHeader(
-  "Content-Type",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-);
-res.setHeader(
-  "Content-Disposition",
-  `attachment; filename=Therapy_Report_${new Date().toISOString().split("T")[0]}.xlsx`
-);
-res.setHeader('Content-Length', buffer.length);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Therapy_Report_${new Date().toISOString().split("T")[0]}.xlsx`
+    );
+    res.setHeader('Content-Length', buffer.length);
 
-res.send(buffer);
+    res.send(buffer);
   } catch (error) {
     console.error("❌ Error exporting therapy report:", error);
     res.status(500).json({
-      message: "Failed to export therapy report",
+      message: "Failed to generate therapy report",
       error: error.message,
     });
   }
@@ -2786,6 +2786,7 @@ const exportBalanceReport = async (req, res) => {
       { header: "Mobile", key: "phone", width: 15 },
       { header: "Purpose", key: "purpose", width: 30 },
       { header: "Balance Amount", key: "amount", width: 18 },
+      { header: "Sponsor", key: "sponsor", width: 25 }, // ✅ ADD THIS
       { header: "Date", key: "date", width: 15 },
     ];
 
@@ -2831,30 +2832,102 @@ res.send(buffer);
 const exportSponsorReport = async (req, res) => {
   try {
     const { dateFrom, dateTo, sponsor } = req.query;
-    console.log(dateFrom, dateTo, sponsor);
-    if (!sponsor || !dateFrom || !dateTo) {
-      return res
-        .status(400)
-        .json({ message: "Missing sponsor, dateFrom, or dateTo" });
+
+    console.log("👥 Sponsor Report Request:", { dateFrom, dateTo, sponsor });
+
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ message: "Missing date range" });
     }
 
+    // ✅ FIXED: Universal date parser
     const parseDDMMYYYY = (str) => {
       if (!str) return null;
+      
+      // Handle DD/MM/YYYY format
       if (str.includes("/")) {
         const [day, month, year] = str.split("/").map(Number);
         return new Date(year, month - 1, day);
-      } else if (str.includes("-")) {
-        return new Date(str); // parses ISO date
+      } 
+      // Handle YYYY-MM-DD format
+      else if (str.includes("-")) {
+        return new Date(str);
       }
       return null;
     };
 
     const fromDate = parseDDMMYYYY(dateFrom);
     const toDate = parseDDMMYYYY(dateTo);
+    
+    if (!fromDate || !toDate || isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+    
     fromDate.setHours(0, 0, 0, 0);
     toDate.setHours(23, 59, 59, 999);
 
-    const patients = await patientModel.find();
+    console.log("📅 Parsed Date Range:", { fromDate, toDate });
+    console.log("🏢 Looking for sponsor:", sponsor || "All sponsors");
+
+    // ✅ STEP 1: Fetch visits with optional sponsor filter
+    const visitFilter = {};
+    if (sponsor && sponsor.trim() !== "") {
+      // Case-insensitive partial match
+      visitFilter.sponsor = new RegExp(sponsor.trim(), "i");
+      console.log("🔍 Using sponsor filter:", visitFilter.sponsor);
+    }
+
+    const visits = await visitModel.find(visitFilter).lean();
+    console.log(`📦 Total visits from DB: ${visits.length}`);
+
+    // ✅ STEP 2: Filter visits by date range
+    const filteredVisits = visits.filter((visit) => {
+      if (!visit.date || !visit.patientId) {
+        console.log("⚠️ Visit missing date or patientId:", visit._id);
+        return false;
+      }
+      
+      const visitDate = parseDDMMYYYY(visit.date);
+      if (!visitDate || isNaN(visitDate.getTime())) {
+        console.log("⚠️ Invalid visit date:", visit.date);
+        return false;
+      }
+      
+      visitDate.setHours(0, 0, 0, 0);
+      const inRange = visitDate >= fromDate && visitDate <= toDate;
+      
+      if (!inRange) {
+        console.log(`❌ Visit ${visit._id} outside range: ${visit.date}`);
+      }
+      
+      return inRange;
+    });
+
+    console.log(`✅ Filtered visits: ${filteredVisits.length}`);
+
+    if (filteredVisits.length === 0) {
+      return res.status(404).json({
+        message: `No visits found for ${sponsor || "any sponsor"} between ${dateFrom} and ${dateTo}.`,
+      });
+    }
+
+    // ✅ STEP 3: Fetch only needed patients
+    const patientIds = [
+      ...new Set(filteredVisits.map(v => v.patientId.toString()))
+    ];
+
+    console.log(`👥 Fetching ${patientIds.length} unique patients`);
+
+    const patients = await patientModel
+      .find({ _id: { $in: patientIds } })
+      .lean();
+
+    const patientMap = new Map(
+      patients.map(p => [p._id.toString(), p])
+    );
+
+    console.log(`✅ Found ${patients.length} patients`);
+
+    // ✅ STEP 4: Generate Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Sponsor Report");
 
@@ -2864,16 +2937,18 @@ const exportSponsorReport = async (req, res) => {
       { header: "Gender", key: "gender", width: 10 },
       { header: "Mobile", key: "phone", width: 15 },
       { header: "City", key: "city", width: 15 },
+      { header: "Sponsor", key: "sponsor", width: 25 },
       { header: "Date", key: "date", width: 15 },
     ];
 
+    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true };
+      cell.font = { bold: true, size: 12 };
       cell.fill = {
         type: "pattern",
         pattern: "solid",
-        fgColor: { argb: "FFD7CCC8" },
+        fgColor: { argb: "FFB3E5FC" },
       };
       cell.alignment = { horizontal: "center", vertical: "middle" };
       cell.border = {
@@ -2883,52 +2958,61 @@ const exportSponsorReport = async (req, res) => {
         right: { style: "thin" },
       };
     });
-    const normalize = (str) => str.replace(/\s+/g, " ").trim().toLowerCase();
 
-    for (const patient of patients) {
-      const visits = await visitModel.find({ patientId: patient._id });
-
-      for (const visit of visits) {
-        if (!visit.date || !visit.sponsor) continue;
-
-        const visitDate = parseDDMMYYYY(visit.date);
-        if (
-          visitDate >= fromDate &&
-          visitDate <= toDate &&
-          normalize(visit.sponsor) === normalize(sponsor)
-        ) {
-          console.log("entered here");
-          const newRow = worksheet.addRow({
-            idno: patient.idno || "",
-            name: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
-            gender: patient.gender || "",
-            phone: patient.phone || "",
-            city: patient.city || "",
-            date: visit.date,
-          });
-          newRow.getCell("phone").alignment = { horizontal: "left" };
-        }
+    // Add rows
+    filteredVisits.forEach((visit) => {
+      const patient = patientMap.get(visit.patientId.toString());
+      if (!patient) {
+        console.log("⚠️ Patient not found for visit:", visit._id);
+        return;
       }
-    }
+
+      worksheet.addRow({
+        idno: patient.idno || "",
+        name: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
+        gender: patient.gender || "",
+        phone: patient.phone || "",
+        city: patient.city || "",
+        sponsor: visit.sponsor || "N/A",
+        date: visit.date,
+      });
+    });
+
+    // Center align all cells
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
+        });
+      }
+    });
+
+    console.log("✅ Excel generated successfully");
 
     const buffer = await workbook.xlsx.writeBuffer();
 
-res.setHeader(
-  "Content-Type",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-);
-res.setHeader(
-  "Content-Disposition",
-  "attachment; filename=Sponsor_Report.xlsx"
-);
-res.setHeader('Content-Length', buffer.length);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Sponsor_Report_${sponsor ? sponsor.replace(/\s+/g, '_') : 'All'}_${dateFrom}_to_${dateTo}.xlsx`
+    );
+    res.setHeader("Content-Length", buffer.length);
 
-res.send(buffer);
-  } catch (error) {
-    console.error("Error exporting sponsor report:", error);
-    res.status(500).json({
+    res.send(buffer);
+  } catch (err) {
+    console.error("❌ Sponsor report error:", err);
+    res.status(500).json({ 
       message: "Failed to export sponsor report",
-      error: error.message,
+      error: err.message 
     });
   }
 };
