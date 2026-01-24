@@ -80,7 +80,7 @@ export default function PatientEditDialog({
         setIsLoading(true);
         try {
           const response = await fetch(
-            "${API_BASE_URL}/api/website/enquiry/view"
+            `${API_BASE_URL}/api/website/enquiry/view`
           );
           const data = await response.json();
           
@@ -522,4 +522,5 @@ const validateForm = () => {
       </DialogContent>
     </Dialog>
   );
+
 }
