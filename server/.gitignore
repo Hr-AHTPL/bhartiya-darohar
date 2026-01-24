@@ -1,0 +1,23 @@
+# Environment
+.env
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+logs/
+startup-error.log
+
+# Uploads / runtime data
+uploads/
+
+# Temporary / debug files
+*.backup
+*.save
+debug-*.js
+test-*.js
+*.xlsx
+
+# PM2
+.pm2
