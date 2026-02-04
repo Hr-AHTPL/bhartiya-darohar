@@ -98,6 +98,305 @@ const exportPrescriptionFormToExcel = async (req, res) => {
   }
 };
 
+const exportTherapyCashReceipt = async (req, res) => {
+  try {
+    const patientId = req.params.id;
+    const {
+      feeAmount,
+      receivedAmount,
+      discount,
+      approvalby,
+      therapies, // Array of therapy objects: [{name: "Therapy1", sessions: 5}, {name: "Therapy2", sessions: 3}]
+    } = req.query;
+
+    // Fetch patient details
+    const patient = await patientModel.findById(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
+    // Fetch last visit
+    const lastVisit = await visitModel
+      .findOne({ patientId: patient._id })
+      .sort({ createdAt: -1 });
+
+    if (!lastVisit) {
+      return res.status(404).json({ message: "No last visit found" });
+    }
+
+    // Generate Bill Number using existing counterModel
+    const billCounter = await counterModel.findOneAndUpdate(
+      { name: "bill_number_counter" },
+      { $inc: { value: 1 } },
+      { new: true, upsert: true }
+    );
+    const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
+
+    // Calculate financial details
+    const numericFee = Number(feeAmount);
+    const numericReceived = Number(receivedAmount);
+    const numericDiscount = Number(discount);
+    const totalAfterDiscount = numericFee - (numericFee * numericDiscount) / 100;
+    const balance = totalAfterDiscount - numericReceived;
+
+    // Parse therapies from query string (if sent as JSON string)
+    let therapyList = [];
+    if (therapies) {
+      try {
+        therapyList = typeof therapies === "string" ? JSON.parse(therapies) : therapies;
+      } catch (e) {
+        return res.status(400).json({ message: "Invalid therapies format" });
+      }
+    }
+
+    // Validate max 3 therapies
+    if (therapyList.length > 3) {
+      return res.status(400).json({ message: "Maximum 3 therapies allowed" });
+    }
+
+    // Update visit with therapy information
+    therapyList.forEach((therapy) => {
+      lastVisit.therapies.push(therapy.name);
+      lastVisit.therapyWithAmount.push({
+        name: therapy.name,
+        receivedAmount: receivedAmount,
+      });
+      lastVisit.discounts.therapies.push({
+        name: therapy.name,
+        percentage: discount,
+        approvedBy: approvalby,
+      });
+      lastVisit.balance.therapies.push({
+        name: therapy.name,
+        balance: balance,
+      });
+    });
+
+    await lastVisit.save();
+
+    // Load Excel Template
+    const templatePath = path.join(
+      __dirname,
+      "../../assets/receiptGenerationTherapy.xlsx"
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(templatePath);
+    const worksheet = workbook.getWorksheet("Sheet1");
+
+    if (!worksheet) {
+      return res.status(400).json({ message: "Worksheet not found" });
+    }
+
+    const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`;
+    const address = `${patient.houseno || ""}, ${patient.city || ""}`;
+
+    // Helper function to update cells
+    const updateCells = (cellMap) => {
+      for (const [cell, value] of Object.entries(cellMap)) {
+        worksheet.getCell(cell).value = value;
+      }
+    };
+
+    // =================== FIRST BILL (TOP COPY) ===================
+    const firstBillCells = {
+      // Bill No. (Row 5)
+      B5: billNumber,
+      
+      // ID No. (Row 5)
+      E5: patient.idno,
+      
+      // Date (Row 5)
+      H5: lastVisit.date,
+      
+      // Name (Row 6)
+      B6: fullName,
+      
+      // Sex (Row 6)
+      F6: patient.gender || "",
+      
+      // Age (Row 6)
+      H6: patient.age || "",
+      
+      // Address (Row 7)
+      B7: address,
+      
+      // Mobile (Row 7)
+      H7: patient.phone || "",
+      
+      // Fee (Row 8)
+      B8: numericFee,
+      
+      // Discount (%) (Row 8)
+      D8: numericDiscount,
+      
+      // Approved by (Row 8)
+      H8: approvalby || "",
+      
+      // Total (Row 9)
+      B9: totalAfterDiscount,
+      
+      // Received Amount (Row 9)
+      D9: numericReceived,
+      
+      // Balance (Row 9)
+      H9: balance,
+    };
+
+    // =================== SECOND BILL (MIDDLE COPY) ===================
+    const secondBillCells = {
+      // Bill No. (Row 25)
+      B25: billNumber,
+      
+      // ID No. (Row 25)
+      E25: patient.idno,
+      
+      // Date (Row 25)
+      H25: lastVisit.date,
+      
+      // Name (Row 26)
+      B26: fullName,
+      
+      // Sex (Row 26)
+      F26: patient.gender || "",
+      
+      // Age (Row 26)
+      H26: patient.age || "",
+      
+      // Address (Row 27)
+      B27: address,
+      
+      // Mobile (Row 27)
+      H27: patient.phone || "",
+      
+      // Fee (Row 28)
+      B28: numericFee,
+      
+      // Discount (%) (Row 28)
+      D28: numericDiscount,
+      
+      // Approved by (Row 28)
+      H28: approvalby || "",
+      
+      // Total (Row 29)
+      B29: totalAfterDiscount,
+      
+      // Received Amount (Row 29)
+      D29: numericReceived,
+      
+      // Balance (Row 29)
+      H29: balance,
+    };
+
+    // =================== THIRD STRIP (BOTTOM) ===================
+    const thirdStripCells = {
+      // ID No. (Row 45)
+      B45: patient.idno,
+      
+      // Name (Row 45)
+      E45: fullName,
+      
+      // Date (Row 45)
+      H45: lastVisit.date,
+      
+      // Bill No. (Row 46)
+      B46: billNumber,
+    };
+
+    // Update all cells
+    updateCells(firstBillCells);
+    updateCells(secondBillCells);
+    updateCells(thirdStripCells);
+
+    // =================== ADD THERAPY NAMES AND OVALS ===================
+    
+    // Starting row for therapies in first bill
+    let firstBillTherapyRow = 10;
+    // Starting row for therapies in second bill
+    let secondBillTherapyRow = 30;
+    // Starting row for therapies in third strip
+    let thirdStripTherapyRow = 47;
+
+    therapyList.forEach((therapy, index) => {
+      // First Bill - Add therapy name
+      worksheet.getCell(`B${firstBillTherapyRow}`).value = therapy.name;
+      worksheet.getCell(`B${firstBillTherapyRow}`).font = { bold: true, size: 11 };
+      
+      // First Bill - Add ovals for sessions (starting from row after therapy name)
+      const firstBillOvalRow = firstBillTherapyRow + 1;
+      addSessionOvals(worksheet, firstBillOvalRow, therapy.sessions);
+      
+      // Second Bill - Add therapy name
+      worksheet.getCell(`B${secondBillTherapyRow}`).value = therapy.name;
+      worksheet.getCell(`B${secondBillTherapyRow}`).font = { bold: true, size: 11 };
+      
+      // Second Bill - Add ovals for sessions
+      const secondBillOvalRow = secondBillTherapyRow + 1;
+      addSessionOvals(worksheet, secondBillOvalRow, therapy.sessions);
+      
+      // Third Strip - Add therapy name
+      worksheet.getCell(`B${thirdStripTherapyRow}`).value = therapy.name;
+      worksheet.getCell(`B${thirdStripTherapyRow}`).font = { bold: true, size: 10 };
+      
+      // Third Strip - Add ovals for sessions
+      const thirdStripOvalRow = thirdStripTherapyRow + 1;
+      addSessionOvals(worksheet, thirdStripOvalRow, therapy.sessions, true);
+      
+      // Move to next therapy position (therapy name + 3 rows for ovals + 1 spacing row)
+      firstBillTherapyRow += 5;
+      secondBillTherapyRow += 5;
+      thirdStripTherapyRow += 5;
+    });
+
+    // Generate and send file
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=therapy_receipt_${(patient.idno || "patient").replace(
+        /[\\/]/g,
+        "_"
+      )}_${new Date().toISOString().split("T")[0]}.xlsx`
+    );
+
+    res.send(buffer);
+  } catch (err) {
+    console.error("Error exporting therapy cash receipt:", err);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: err.message });
+  }
+};
+
+// Helper function to add session ovals
+function addSessionOvals(worksheet, startRow, sessionCount, isSmall = false) {
+  const ovalColumns = ["B", "C", "D", "E", "F", "G", "H", "I", "J"];
+  const maxOvalsPerRow = 7;
+  const rows = Math.ceil(sessionCount / maxOvalsPerRow);
+  
+  let currentSession = 0;
+  
+  for (let row = 0; row < Math.min(rows, 3); row++) {
+    const currentRow = startRow + row;
+    const ovalsInThisRow = Math.min(maxOvalsPerRow, sessionCount - currentSession);
+    
+    for (let col = 0; col < ovalsInThisRow; col++) {
+      const cell = worksheet.getCell(`${ovalColumns[col]}${currentRow}`);
+      cell.value = "⭕"; // Unicode oval/circle
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.font = { size: isSmall ? 10 : 14 };
+      currentSession++;
+    }
+  }
+}
+
+module.exports = exportTherapyCashReceipt;
+
+
+
 const exportPrakritiCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
