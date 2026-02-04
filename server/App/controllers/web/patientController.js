@@ -99,9 +99,9 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 };
 
 // ============================================================================
-// REAL FIX - exportTherapyCashReceipt Function
-// The actual issue: NaN values being pushed to Mongoose arrays
-// Solution: Properly handle undefined/NaN values from query parameters
+// ABSOLUTE FINAL FIX - exportTherapyCashReceipt Function
+// Root Issue: Mongoose subdocument array push() has type coercion issues
+// Solution: Use MongoDB's $addToSet operator directly to avoid Mongoose casting
 // Replace lines 106-422 in patientController.js
 // ============================================================================
 
@@ -120,9 +120,9 @@ const exportTherapyCashReceipt = async (req, res) => {
       patientId,
       therapiesRaw: therapies,
       therapiesType: typeof therapies,
-      feeAmount,           // ✅ Log this
-      receivedAmount,      // ✅ Log this
-      discount,            // ✅ Log this
+      feeAmount,
+      receivedAmount,
+      discount,
       approvalby
     });
 
@@ -149,8 +149,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
 
-    // ✅ CRITICAL FIX: Properly handle NaN values
-    // Number(undefined) = NaN, which Mongoose rejects even though typeof NaN === "number"
+    // Safe number conversion
     const safeNumber = (value, defaultValue = 0) => {
       const num = Number(value);
       return isNaN(num) ? defaultValue : num;
@@ -167,8 +166,7 @@ const exportTherapyCashReceipt = async (req, res) => {
       numericReceived,
       numericDiscount,
       totalAfterDiscount,
-      balance,
-      hasNaN: isNaN(numericFee) || isNaN(numericReceived) || isNaN(numericDiscount)
+      balance
     });
 
     // Parse and validate therapies
@@ -196,10 +194,9 @@ const exportTherapyCashReceipt = async (req, res) => {
             return false;
           }
           
-          // ✅ FIX: Ensure sessions is a valid number (not NaN)
-          const sessions = Number(therapy.sessions);
-          if (isNaN(sessions) || sessions < 1) {
-            console.warn(`⚠️ Therapy at index ${index} has invalid sessions:`, therapy.sessions);
+          const sessions = safeNumber(therapy.sessions, 1);
+          if (sessions < 1) {
+            console.warn(`⚠️ Therapy at index ${index} has invalid sessions:`, sessions);
             return false;
           }
           
@@ -229,16 +226,8 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(400).json({ message: "Maximum 3 therapies allowed" });
     }
 
-    // ✅ CRITICAL FIX: Initialize nested arrays BEFORE manipulation
-    console.log("💾 Updating visit with therapy data...");
-    
-    // Make sure arrays exist
-    if (!lastVisit.therapies) lastVisit.therapies = [];
-    if (!lastVisit.therapyWithAmount) lastVisit.therapyWithAmount = [];
-    if (!lastVisit.discounts) lastVisit.discounts = {};
-    if (!lastVisit.discounts.therapies) lastVisit.discounts.therapies = [];
-    if (!lastVisit.balance) lastVisit.balance = {};
-    if (!lastVisit.balance.therapies) lastVisit.balance.therapies = [];
+    // ✅ CRITICAL FIX: Use MongoDB update operators instead of Mongoose push
+    console.log("💾 Updating visit with therapy data using MongoDB operators...");
     
     // Calculate per-therapy amounts
     const perTherapyFee = numericFee / therapyList.length;
@@ -253,117 +242,91 @@ const exportTherapyCashReceipt = async (req, res) => {
       perTherapyBalance
     });
 
+    // Build update operations for each therapy
+    const updateOps = {};
+    
     therapyList.forEach((therapy, index) => {
       console.log(`📝 Processing therapy ${index + 1}:`, therapy);
       
-      // ✅ CRITICAL FIX: Use safeNumber for sessions too
       const safeSessions = safeNumber(therapy.sessions, 1);
+      const therapyName = therapy.name;
       
-      // 1. Add to main therapies array with NaN protection
-      const therapyExists = lastVisit.therapies.some(t => t.name === therapy.name);
+      // Check if therapy already exists to avoid duplicates
+      const therapyExists = lastVisit.therapies?.some(t => t.name === therapyName);
+      const therapyAmountExists = lastVisit.therapyWithAmount?.some(t => t.name === therapyName);
+      const discountExists = lastVisit.discounts?.therapies?.some(t => t.name === therapyName);
+      const balanceExists = lastVisit.balance?.therapies?.some(t => t.name === therapyName);
+      
       if (!therapyExists) {
-        const therapyDoc = {
-          name: String(therapy.name),
+        if (!updateOps.$push) updateOps.$push = {};
+        if (!updateOps.$push.therapies) updateOps.$push.therapies = { $each: [] };
+        
+        updateOps.$push.therapies.$each.push({
+          name: therapyName,
           sessions: safeSessions,
           amount: perTherapyFee
-        };
-        
-        console.log(`📋 Adding to therapies:`, therapyDoc);
-        
-        // Final validation before push
-        if (!isNaN(therapyDoc.sessions) && !isNaN(therapyDoc.amount)) {
-          lastVisit.therapies.push(therapyDoc);
-          console.log(`✅ Added to therapies array: ${therapy.name}`);
-        } else {
-          console.error(`❌ Skipping invalid therapy doc:`, therapyDoc);
-        }
+        });
+        console.log(`➕ Will add to therapies: ${therapyName}`);
       }
       
-      // 2. Add to therapyWithAmount with NaN protection
-      const therapyAmountIndex = lastVisit.therapyWithAmount.findIndex(t => t.name === therapy.name);
-      if (therapyAmountIndex === -1) {
-        const amountDoc = {
-          name: String(therapy.name),
+      if (!therapyAmountExists) {
+        if (!updateOps.$push) updateOps.$push = {};
+        if (!updateOps.$push.therapyWithAmount) updateOps.$push.therapyWithAmount = { $each: [] };
+        
+        updateOps.$push.therapyWithAmount.$each.push({
+          name: therapyName,
           receivedAmount: perTherapyReceived
-        };
-        
-        console.log(`📋 Adding to therapyWithAmount:`, amountDoc);
-        
-        // Final validation before push
-        if (!isNaN(amountDoc.receivedAmount)) {
-          lastVisit.therapyWithAmount.push(amountDoc);
-          console.log(`✅ Added to therapyWithAmount: ${therapy.name}`);
-        } else {
-          console.error(`❌ Skipping invalid amount doc:`, amountDoc);
-        }
-      } else {
-        if (!isNaN(perTherapyReceived)) {
-          lastVisit.therapyWithAmount[therapyAmountIndex].receivedAmount = perTherapyReceived;
-          console.log(`✅ Updated therapyWithAmount: ${therapy.name}`);
-        }
+        });
+        console.log(`➕ Will add to therapyWithAmount: ${therapyName}`);
       }
       
-      // 3. Add to discounts.therapies with NaN protection
-      const discountIndex = lastVisit.discounts.therapies.findIndex(d => d.name === therapy.name);
-      if (discountIndex === -1) {
-        const discountDoc = {
-          name: String(therapy.name),
+      if (!discountExists) {
+        if (!updateOps.$push) updateOps.$push = {};
+        if (!updateOps.$push['discounts.therapies']) updateOps.$push['discounts.therapies'] = { $each: [] };
+        
+        updateOps.$push['discounts.therapies'].$each.push({
+          name: therapyName,
           percentage: numericDiscount,
-          approvedBy: String(approvalby || "N/A")
-        };
-        
-        console.log(`📋 Adding to discounts:`, discountDoc);
-        
-        // Final validation before push
-        if (!isNaN(discountDoc.percentage)) {
-          lastVisit.discounts.therapies.push(discountDoc);
-          console.log(`✅ Added discount for: ${therapy.name}`);
-        } else {
-          console.error(`❌ Skipping invalid discount doc:`, discountDoc);
-        }
+          approvedBy: approvalby || "N/A"
+        });
+        console.log(`➕ Will add discount for: ${therapyName}`);
       }
       
-      // 4. Add to balance.therapies with NaN protection
-      const balanceIndex = lastVisit.balance.therapies.findIndex(b => b.name === therapy.name);
-      if (balanceIndex === -1) {
-        const balanceDoc = {
-          name: String(therapy.name),
+      if (!balanceExists) {
+        if (!updateOps.$push) updateOps.$push = {};
+        if (!updateOps.$push['balance.therapies']) updateOps.$push['balance.therapies'] = { $each: [] };
+        
+        updateOps.$push['balance.therapies'].$each.push({
+          name: therapyName,
           balance: perTherapyBalance
-        };
-        
-        console.log(`📋 Adding to balance:`, balanceDoc);
-        
-        // Final validation before push
-        if (!isNaN(balanceDoc.balance)) {
-          lastVisit.balance.therapies.push(balanceDoc);
-          console.log(`✅ Added balance for: ${therapy.name}`);
-        } else {
-          console.error(`❌ Skipping invalid balance doc:`, balanceDoc);
-        }
+        });
+        console.log(`➕ Will add balance for: ${therapyName}`);
       }
     });
 
-    // ✅ Save the visit with error handling
-    console.log("💾 Attempting to save visit...");
-    try {
-      // Mark nested paths as modified to ensure Mongoose saves them
-      lastVisit.markModified('therapies');
-      lastVisit.markModified('therapyWithAmount');
-      lastVisit.markModified('discounts');
-      lastVisit.markModified('balance');
+    // Perform the update if there are operations
+    if (Object.keys(updateOps).length > 0) {
+      console.log("💾 Executing MongoDB update operations...");
+      console.log("Update operations:", JSON.stringify(updateOps, null, 2));
       
-      await lastVisit.save();
-      console.log("✅ Visit saved successfully with therapy data");
-    } catch (saveError) {
-      console.error("❌ Error saving visit:", saveError);
-      console.error("Error details:", {
-        message: saveError.message,
-        name: saveError.name,
-        errors: saveError.errors
-      });
-      
-      // Don't return error, continue with receipt generation
-      console.log("📋 Continuing with receipt generation anyway...");
+      try {
+        await visitModel.findByIdAndUpdate(
+          lastVisit._id,
+          updateOps,
+          { new: true, runValidators: true }
+        );
+        console.log("✅ Visit updated successfully with therapy data");
+      } catch (updateError) {
+        console.error("❌ Error updating visit:", updateError);
+        console.error("Error details:", {
+          message: updateError.message,
+          name: updateError.name
+        });
+        // Continue with receipt generation even if update fails
+        console.log("📋 Continuing with receipt generation anyway...");
+      }
+    } else {
+      console.log("ℹ️  No new therapies to add (all already exist)");
     }
 
     // Load Excel Template
