@@ -952,15 +952,14 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
     setShowReappointmentDialog(false);
   };
 
-  const handleCashReceiptSubmit = async () => {
+ const handleCashReceiptSubmit = async () => {
   if (!selectedPatient) return;
 
   const numericFee = parseFloat(feeAmount);
-  const discount = parseFloat(discountPercentage);
+  const discount = parseFloat(discountPercentage) || 0;
   const approvalby = approvedBy.trim();
   const numericReceived = parseFloat(receivedAmount);
-  const finalPurpose =
-    receiptPurpose === "Others" ? otherPurpose : receiptPurpose;
+  const finalPurpose = receiptPurpose === "Others" ? otherPurpose : receiptPurpose;
 
   if (!numericFee || numericFee <= 0) {
     alert("Please enter a valid fee amount");
@@ -992,12 +991,12 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
       approvalby: approvalby,
     };
 
-    // ⭐ NEW: Choose endpoint based on purpose
+    // ⭐ Choose the correct endpoint based on purpose
     if (finalPurpose === "Therapy" && addedTherapies.length > 0) {
-      // Use NEW therapy endpoint with sessions
+      // Use NEW therapy endpoint
       endpoint = `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`;
       
-      // Format therapies array for the new endpoint
+      // Format therapies for new endpoint (just name and sessions)
       params.therapies = JSON.stringify(
         addedTherapies.map(t => ({
           name: t.name,
@@ -1008,17 +1007,9 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
       console.log("🎯 Using NEW therapy endpoint:", endpoint);
       console.log("📦 Therapy data:", params.therapies);
     } else {
-      // Use OLD endpoint for other purposes (Consultation, Prakriti, Others)
+      // Use OLD endpoint for Consultation, Prakriti, Others
       endpoint = `${API_BASE_URL}/api/website/enquiry/prakriti-registration/${selectedPatient.id}`;
       params.purpose = finalPurpose;
-      
-      // For old endpoint, also include therapyName if it was Therapy (backward compatibility)
-      if (finalPurpose === "Therapy") {
-        const therapyNames = addedTherapies.map(t => 
-          `${t.name} (${t.sessions} session${t.sessions > 1 ? 's' : ''})`
-        ).join(', ');
-        params.therapyName = therapyNames;
-      }
       
       console.log("📝 Using OLD receipt endpoint:", endpoint);
     }
@@ -1036,9 +1027,9 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
     const a = document.createElement("a");
     a.href = url;
     
-    // Different filename for therapy vs other receipts
+    // Better filename
     const filename = finalPurpose === "Therapy" && addedTherapies.length > 0
-      ? `therapy_receipt_${selectedPatient.name.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`
+      ? `therapy_receipt_${selectedPatient.name.replace(/\s+/g, "_")}.xlsx`
       : `cash_receipt_${selectedPatient.name.replace(/\s+/g, "_")}_${finalPurpose.replace(/\s+/g, "_")}.xlsx`;
     
     a.download = filename;
@@ -1046,9 +1037,7 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
 
     window.URL.revokeObjectURL(url);
     
-    console.log(
-      `✅ Receipt generated for ${selectedPatient.name} - Purpose: ${finalPurpose}, Fee: ₹${numericFee}, Received: ₹${numericReceived}`
-    );
+    console.log(`✅ Receipt generated for ${selectedPatient.name}`);
     
     // Reset form
     setOtherPurpose("");
@@ -1065,7 +1054,7 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
     alert("Receipt generated successfully!");
   } catch (error) {
     console.error("❌ Error generating cash receipt:", error);
-    alert("Failed to generate cash receipt. Please check console for details.");
+    alert("Failed to generate cash receipt. Please try again.");
   }
 };
 
