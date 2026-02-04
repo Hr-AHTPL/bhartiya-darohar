@@ -99,8 +99,8 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 };
 
 // ============================================================================
-// COMPLETE FIXED VERSION - exportTherapyCashReceipt Function
-// Replace the entire function (lines 101-380) in patientController.js
+// FIXED VERSION - exportTherapyCashReceipt Function
+// Replace lines 106-422 in patientController.js with this version
 // ============================================================================
 
 const exportTherapyCashReceipt = async (req, res) => {
@@ -117,7 +117,10 @@ const exportTherapyCashReceipt = async (req, res) => {
     console.log("📝 Therapy receipt request:", {
       patientId,
       therapiesRaw: therapies,
-      therapiesType: typeof therapies
+      therapiesType: typeof therapies,
+      feeAmount,
+      receivedAmount,
+      discount
     });
 
     // Fetch patient details
@@ -143,12 +146,20 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
 
-    // Calculate financial details
-    const numericFee = Number(feeAmount);
-    const numericReceived = Number(receivedAmount);
-    const numericDiscount = Number(discount);
+    // ✅ FIX: Ensure all numeric values are properly converted
+    const numericFee = Number(feeAmount) || 0;
+    const numericReceived = Number(receivedAmount) || 0;
+    const numericDiscount = Number(discount) || 0;
     const totalAfterDiscount = numericFee - (numericFee * numericDiscount) / 100;
     const balance = totalAfterDiscount - numericReceived;
+
+    console.log("💰 Financial calculations:", {
+      numericFee,
+      numericReceived,
+      numericDiscount,
+      totalAfterDiscount,
+      balance
+    });
 
     // Parse and validate therapies
     let therapyList = [];
@@ -205,7 +216,7 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(400).json({ message: "Maximum 3 therapies allowed" });
     }
 
-    // ✅ FIXED: Update visit with therapy information
+    // ✅ CRITICAL FIX: Update visit with therapy information
     console.log("💾 Updating visit with therapy data...");
     
     // Initialize nested objects if they don't exist
@@ -216,165 +227,172 @@ const exportTherapyCashReceipt = async (req, res) => {
     if (!lastVisit.balance.therapies) lastVisit.balance.therapies = [];
     if (!lastVisit.therapies) lastVisit.therapies = [];
     
+    // Calculate per-therapy amounts
+    const perTherapyFee = numericFee / therapyList.length;
+    const perTherapyReceived = numericReceived / therapyList.length;
+    const perTherapyAfterDiscount = perTherapyFee - (perTherapyFee * numericDiscount) / 100;
+    const perTherapyBalance = perTherapyAfterDiscount - perTherapyReceived;
+
     therapyList.forEach((therapy, index) => {
-      console.log(`📝 Adding therapy ${index + 1} to visit:`, therapy);
+      console.log(`📝 Processing therapy ${index + 1}:`, therapy);
       
-      // Add to main therapies array with proper schema structure (avoid duplicates)
+      // ✅ FIX 1: Add to main therapies array - avoid duplicates
       const therapyExists = lastVisit.therapies.some(t => t.name === therapy.name);
       if (!therapyExists) {
         lastVisit.therapies.push({
           name: therapy.name,
-          sessions: therapy.sessions || 1,
-          amount: numericFee || 0,
+          sessions: Number(therapy.sessions) || 1,  // ✅ Ensure it's a number
+          amount: perTherapyFee,  // ✅ Use calculated per-therapy amount
         });
+        console.log(`✅ Added to therapies array: ${therapy.name}`);
       }
       
-      // Add to therapyWithAmount (avoid duplicates) - use NUMERIC values
-      const therapyAmountExists = lastVisit.therapyWithAmount.some(t => t.name === therapy.name);
-      if (!therapyAmountExists) {
+      // ✅ FIX 2: Add to therapyWithAmount - avoid duplicates and ENSURE NUMBER TYPE
+      const therapyAmountIndex = lastVisit.therapyWithAmount.findIndex(t => t.name === therapy.name);
+      if (therapyAmountIndex === -1) {
+        // Add new entry with GUARANTEED numeric value
         lastVisit.therapyWithAmount.push({
           name: therapy.name,
-          receivedAmount: numericReceived || 0,  // ✅ FIXED: Use numeric value
+          receivedAmount: perTherapyReceived  // ✅ CRITICAL: Must be a Number, not string
         });
+        console.log(`✅ Added to therapyWithAmount: ${therapy.name} with amount ${perTherapyReceived}`);
+      } else {
+        // Update existing entry with GUARANTEED numeric value
+        lastVisit.therapyWithAmount[therapyAmountIndex].receivedAmount = perTherapyReceived;
+        console.log(`✅ Updated therapyWithAmount: ${therapy.name} with amount ${perTherapyReceived}`);
       }
       
-      // Add to discounts.therapies (avoid duplicates) - use NUMERIC values
-      const therapyDiscountExists = lastVisit.discounts.therapies.some(t => t.name === therapy.name);
-      if (!therapyDiscountExists) {
+      // ✅ FIX 3: Add discount info - avoid duplicates
+      const discountIndex = lastVisit.discounts.therapies.findIndex(d => d.name === therapy.name);
+      if (discountIndex === -1) {
         lastVisit.discounts.therapies.push({
           name: therapy.name,
-          percentage: numericDiscount || 0,  // ✅ FIXED: Use numeric value
-          approvedBy: approvalby || "N/A",
+          percentage: numericDiscount,
+          approvedBy: approvalby || "NONE"
         });
+        console.log(`✅ Added discount for: ${therapy.name}`);
       }
       
-      // Add to balance.therapies (avoid duplicates)
-      const therapyBalanceExists = lastVisit.balance.therapies.some(t => t.name === therapy.name);
-      if (!therapyBalanceExists) {
+      // ✅ FIX 4: Add balance info - avoid duplicates
+      const balanceIndex = lastVisit.balance.therapies.findIndex(b => b.name === therapy.name);
+      if (balanceIndex === -1) {
         lastVisit.balance.therapies.push({
           name: therapy.name,
-          balance: balance || 0,
+          balance: perTherapyBalance
         });
+        console.log(`✅ Added balance for: ${therapy.name}`);
       }
     });
 
+    // ✅ Save the visit with proper error handling
     try {
-      // Mark nested paths as modified to ensure Mongoose saves them
-      lastVisit.markModified('therapies');
-      lastVisit.markModified('therapyWithAmount');
-      lastVisit.markModified('discounts');
-      lastVisit.markModified('balance');
-      
       await lastVisit.save();
-      console.log("✅ Visit saved with therapy data");
+      console.log("✅ Visit saved successfully with therapy data");
     } catch (saveError) {
-      console.error("⚠️ Error saving visit data:", saveError);
-      console.error("Error details:", {
-        message: saveError.message,
-        name: saveError.name,
-        errors: saveError.errors
+      console.error("❌ Error saving visit:", saveError);
+      return res.status(500).json({ 
+        message: "Error saving visit data", 
+        error: saveError.message 
       });
-      console.log("📋 Continuing with receipt generation anyway...");
-      // Continue with receipt generation even if save fails
     }
 
     // Load Excel Template
     const templatePath = path.join(
       __dirname,
-      "../../assets/receiptGenerationTherapy.xlsx"
+      "../../assets/therapyReceipt.xlsx"
     );
+    
+    if (!fs.existsSync(templatePath)) {
+      console.error("❌ Template file not found at:", templatePath);
+      return res.status(500).json({ 
+        message: "Template file not found",
+        path: templatePath 
+      });
+    }
+
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(templatePath);
     const worksheet = workbook.getWorksheet("Sheet1");
 
     if (!worksheet) {
-      return res.status(400).json({ message: "Worksheet not found" });
+      return res.status(400).json({ message: "Worksheet 'Sheet1' not found in template" });
     }
 
+    // Patient details
     const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
     const address = `${patient.houseno || ""}, ${patient.city || ""}`;
 
-    // Helper function to update cells
-    const updateCells = (cellMap) => {
-      for (const [cell, value] of Object.entries(cellMap)) {
-        worksheet.getCell(cell).value = value;
+    // Helper function to add session ovals
+    const addSessionOvals = (ws, startRow, sessionCount, isSmall = false) => {
+      const cellHeight = isSmall ? 10 : 12;
+      const cellWidth = isSmall ? 1.5 : 2;
+      
+      for (let i = 0; i < sessionCount && i < 10; i++) {
+        const cellRef = `${String.fromCharCode(66 + i)}${startRow}`;
+        ws.getCell(cellRef).value = "○";
+        ws.getCell(cellRef).font = { 
+          size: isSmall ? 9 : 11, 
+          bold: false 
+        };
+        ws.getCell(cellRef).alignment = { 
+          vertical: "middle", 
+          horizontal: "center" 
+        };
       }
     };
 
-    // First Bill
-    updateCells({
-      B5: billNumber,
-      E5: patient.idno,
-      H5: lastVisit.date,
-      B6: fullName,
-      F6: patient.gender || "",
-      H6: patient.age || "",
-      B7: address,
-      H7: patient.phone || "",
-      B8: numericFee,
-      D8: numericDiscount,
-      H8: approvalby || "",
-      B9: totalAfterDiscount,
-      D9: numericReceived,
-      H9: balance,
-    });
+    // Fill First Bill (Top section)
+    worksheet.getCell("B3").value = billNumber;
+    worksheet.getCell("E3").value = patient.idno;
+    worksheet.getCell("H3").value = lastVisit.date || new Date().toLocaleDateString('en-GB');
+    worksheet.getCell("B4").value = fullName;
+    worksheet.getCell("F4").value = patient.gender || "";
+    worksheet.getCell("H4").value = patient.age || "";
+    worksheet.getCell("B5").value = address;
+    worksheet.getCell("B6").value = patient.district || "";
+    worksheet.getCell("E6").value = patient.state || "";
+    worksheet.getCell("H6").value = patient.pin || "";
+    worksheet.getCell("B7").value = patient.phone || "";
+    worksheet.getCell("E7").value = numericFee;
+    worksheet.getCell("E8").value = numericDiscount;
+    worksheet.getCell("H8").value = approvalby || "";
+    worksheet.getCell("E9").value = totalAfterDiscount;
+    worksheet.getCell("E10").value = numericReceived;
+    worksheet.getCell("E11").value = balance;
 
-    // Second Bill
-    updateCells({
-      B25: billNumber,
-      E25: patient.idno,
-      H25: lastVisit.date,
-      B26: fullName,
-      F26: patient.gender || "",
-      H26: patient.age || "",
-      B27: address,
-      H27: patient.phone || "",
-      B28: numericFee,
-      D28: numericDiscount,
-      H28: approvalby || "",
-      B29: totalAfterDiscount,
-      D29: numericReceived,
-      H29: balance,
-    });
+    // Fill Second Bill (Middle section)
+    worksheet.getCell("B23").value = billNumber;
+    worksheet.getCell("E23").value = patient.idno;
+    worksheet.getCell("H23").value = lastVisit.date || new Date().toLocaleDateString('en-GB');
+    worksheet.getCell("B24").value = fullName;
+    worksheet.getCell("F24").value = patient.gender || "";
+    worksheet.getCell("H24").value = patient.age || "";
+    worksheet.getCell("B25").value = address;
+    worksheet.getCell("B26").value = patient.district || "";
+    worksheet.getCell("E26").value = patient.state || "";
+    worksheet.getCell("H26").value = patient.pin || "";
+    worksheet.getCell("B27").value = patient.phone || "";
+    worksheet.getCell("E27").value = numericFee;
+    worksheet.getCell("E28").value = numericDiscount;
+    worksheet.getCell("H28").value = approvalby || "";
+    worksheet.getCell("E29").value = totalAfterDiscount;
+    worksheet.getCell("E30").value = numericReceived;
+    worksheet.getCell("E31").value = balance;
 
-    // Third Strip
-    updateCells({
-      B45: patient.idno,
-      E45: fullName,
-      H45: lastVisit.date,
-      B46: billNumber,
-    });
+    // Fill Third Strip (Bottom section - smaller)
+    worksheet.getCell("B43").value = billNumber;
+    worksheet.getCell("E43").value = patient.idno;
+    worksheet.getCell("H43").value = lastVisit.date || new Date().toLocaleDateString('en-GB');
+    worksheet.getCell("B44").value = fullName;
+    worksheet.getCell("F44").value = patient.gender || "";
+    worksheet.getCell("H44").value = patient.age || "";
 
-    // Helper function to add session ovals
-    function addSessionOvals(worksheet, startRow, sessionCount, isSmall = false) {
-      const ovalColumns = ["B", "C", "D", "E", "F", "G", "H", "I", "J"];
-      const maxOvalsPerRow = 7;
-      const rows = Math.ceil(sessionCount / maxOvalsPerRow);
-      
-      let currentSession = 0;
-      
-      for (let row = 0; row < Math.min(rows, 3); row++) {
-        const currentRow = startRow + row;
-        const ovalsInThisRow = Math.min(maxOvalsPerRow, sessionCount - currentSession);
-        
-        for (let col = 0; col < ovalsInThisRow; col++) {
-          const cell = worksheet.getCell(`${ovalColumns[col]}${currentRow}`);
-          cell.value = "⭕";
-          cell.alignment = { horizontal: "center", vertical: "middle" };
-          cell.font = { size: isSmall ? 10 : 14 };
-          currentSession++;
-        }
-      }
-    }
-
-    // Add therapy names and ovals
-    let firstBillTherapyRow = 10;
-    let secondBillTherapyRow = 30;
-    let thirdStripTherapyRow = 47;
+    // Add therapy details
+    let firstBillTherapyRow = 13;
+    let secondBillTherapyRow = 33;
+    let thirdStripTherapyRow = 46;
 
     therapyList.forEach((therapy, index) => {
-      console.log(`📝 Adding therapy ${index + 1} to Excel: ${therapy.name} (${therapy.sessions} sessions)`);
-      
       // First Bill
       worksheet.getCell(`B${firstBillTherapyRow}`).value = therapy.name;
       worksheet.getCell(`B${firstBillTherapyRow}`).font = { bold: true, size: 11 };
@@ -416,7 +434,8 @@ const exportTherapyCashReceipt = async (req, res) => {
     console.error("Stack trace:", err.stack);
     res.status(500).json({ 
       message: "Internal Server Error", 
-      error: err.message
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 };
