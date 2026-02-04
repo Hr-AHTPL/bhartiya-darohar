@@ -393,8 +393,6 @@ function addSessionOvals(worksheet, startRow, sessionCount, isSmall = false) {
   }
 }
 
-module.exports = exportTherapyCashReceipt;
-
 
 
 const exportPrakritiCashReceipt = async (req, res) => {
@@ -3759,5 +3757,6 @@ module.exports = {
   exportSponsorReport,
   exportDiscountWiseReport,
   importBulkPatientData,
+  exportTherapyCashReceipt,
   updatePatientDetails
 };
