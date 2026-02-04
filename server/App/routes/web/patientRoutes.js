@@ -27,6 +27,7 @@ const {
   exportSponsorReport,
   exportDiscountWiseReport,
   importBulkPatientData,
+  exportTherapyCashReceipt,
   updatePatientDetails,
 } = require("../../controllers/web/patientController");
 
@@ -39,6 +40,7 @@ patientRouter.get("/last", getLastPatient);
 patientRouter.get("/print", exportLastPatientToExcel);
 patientRouter.get("/prescription/:id", exportPrescriptionFormToExcel);
 patientRouter.get("/prakriti-registration/:id", exportPrakritiCashReceipt);
+patientRouter.get("/therapy-receipt/:id", exportTherapyCashReceipt);
 patientRouter.get("/patient-master", exportPatientMaster);
 patientRouter.patch("/updateprakritiamount/:id", updatePrakritiAmount);
 patientRouter.patch("/update-others/:id", updateVisitPurposeWithAmount);
