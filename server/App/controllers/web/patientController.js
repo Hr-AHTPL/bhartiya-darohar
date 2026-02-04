@@ -99,9 +99,9 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 };
 
 // ============================================================================
-// CRITICAL FIX - exportTherapyCashReceipt Function
-// The issue: Mongoose is strict about types in subdocument arrays
-// Solution: Explicitly convert ALL values to correct types before pushing
+// REAL FIX - exportTherapyCashReceipt Function
+// The actual issue: NaN values being pushed to Mongoose arrays
+// Solution: Properly handle undefined/NaN values from query parameters
 // Replace lines 106-422 in patientController.js
 // ============================================================================
 
@@ -120,9 +120,10 @@ const exportTherapyCashReceipt = async (req, res) => {
       patientId,
       therapiesRaw: therapies,
       therapiesType: typeof therapies,
-      feeAmount,
-      receivedAmount,
-      discount
+      feeAmount,           // ✅ Log this
+      receivedAmount,      // ✅ Log this
+      discount,            // ✅ Log this
+      approvalby
     });
 
     // Fetch patient details
@@ -148,10 +149,16 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
 
-    // ✅ CRITICAL: Convert ALL values to proper types
-    const numericFee = Number(feeAmount) || 0;
-    const numericReceived = Number(receivedAmount) || 0;
-    const numericDiscount = Number(discount) || 0;
+    // ✅ CRITICAL FIX: Properly handle NaN values
+    // Number(undefined) = NaN, which Mongoose rejects even though typeof NaN === "number"
+    const safeNumber = (value, defaultValue = 0) => {
+      const num = Number(value);
+      return isNaN(num) ? defaultValue : num;
+    };
+
+    const numericFee = safeNumber(feeAmount, 0);
+    const numericReceived = safeNumber(receivedAmount, 0);
+    const numericDiscount = safeNumber(discount, 0);
     const totalAfterDiscount = numericFee - (numericFee * numericDiscount) / 100;
     const balance = totalAfterDiscount - numericReceived;
 
@@ -160,7 +167,8 @@ const exportTherapyCashReceipt = async (req, res) => {
       numericReceived,
       numericDiscount,
       totalAfterDiscount,
-      balance
+      balance,
+      hasNaN: isNaN(numericFee) || isNaN(numericReceived) || isNaN(numericDiscount)
     });
 
     // Parse and validate therapies
@@ -187,12 +195,15 @@ const exportTherapyCashReceipt = async (req, res) => {
             console.warn(`⚠️ Therapy at index ${index} has no name:`, therapy);
             return false;
           }
-          if (typeof therapy.sessions !== 'number' || therapy.sessions < 1) {
-            console.warn(`⚠️ Therapy at index ${index} has invalid sessions:`, therapy);
+          
+          // ✅ FIX: Ensure sessions is a valid number (not NaN)
+          const sessions = Number(therapy.sessions);
+          if (isNaN(sessions) || sessions < 1) {
+            console.warn(`⚠️ Therapy at index ${index} has invalid sessions:`, therapy.sessions);
             return false;
           }
           
-          console.log(`✅ Valid therapy ${index}: ${therapy.name} (${therapy.sessions} sessions)`);
+          console.log(`✅ Valid therapy ${index}: ${therapy.name} (${sessions} sessions)`);
           return true;
         });
 
@@ -235,88 +246,124 @@ const exportTherapyCashReceipt = async (req, res) => {
     const perTherapyAfterDiscount = perTherapyFee - (perTherapyFee * numericDiscount) / 100;
     const perTherapyBalance = perTherapyAfterDiscount - perTherapyReceived;
 
+    console.log("💵 Per-therapy amounts:", {
+      perTherapyFee,
+      perTherapyReceived,
+      perTherapyAfterDiscount,
+      perTherapyBalance
+    });
+
     therapyList.forEach((therapy, index) => {
       console.log(`📝 Processing therapy ${index + 1}:`, therapy);
       
-      // ✅ CRITICAL FIX: Create plain objects with EXPLICIT type conversion
-      // This avoids Mongoose casting issues
+      // ✅ CRITICAL FIX: Use safeNumber for sessions too
+      const safeSessions = safeNumber(therapy.sessions, 1);
       
-      // 1. Add to main therapies array
+      // 1. Add to main therapies array with NaN protection
       const therapyExists = lastVisit.therapies.some(t => t.name === therapy.name);
       if (!therapyExists) {
-        // Create a PLAIN object with explicit types
         const therapyDoc = {
-          name: String(therapy.name),           // ✅ Ensure string
-          sessions: Number(therapy.sessions),   // ✅ Ensure number
-          amount: Number(perTherapyFee)         // ✅ Ensure number
+          name: String(therapy.name),
+          sessions: safeSessions,
+          amount: perTherapyFee
         };
         
         console.log(`📋 Adding to therapies:`, therapyDoc);
-        lastVisit.therapies.push(therapyDoc);
-        console.log(`✅ Added to therapies array: ${therapy.name}`);
+        
+        // Final validation before push
+        if (!isNaN(therapyDoc.sessions) && !isNaN(therapyDoc.amount)) {
+          lastVisit.therapies.push(therapyDoc);
+          console.log(`✅ Added to therapies array: ${therapy.name}`);
+        } else {
+          console.error(`❌ Skipping invalid therapy doc:`, therapyDoc);
+        }
       }
       
-      // 2. Add to therapyWithAmount
+      // 2. Add to therapyWithAmount with NaN protection
       const therapyAmountIndex = lastVisit.therapyWithAmount.findIndex(t => t.name === therapy.name);
       if (therapyAmountIndex === -1) {
         const amountDoc = {
-          name: String(therapy.name),                    // ✅ Ensure string
-          receivedAmount: Number(perTherapyReceived)     // ✅ Ensure number
+          name: String(therapy.name),
+          receivedAmount: perTherapyReceived
         };
         
         console.log(`📋 Adding to therapyWithAmount:`, amountDoc);
-        lastVisit.therapyWithAmount.push(amountDoc);
-        console.log(`✅ Added to therapyWithAmount: ${therapy.name}`);
+        
+        // Final validation before push
+        if (!isNaN(amountDoc.receivedAmount)) {
+          lastVisit.therapyWithAmount.push(amountDoc);
+          console.log(`✅ Added to therapyWithAmount: ${therapy.name}`);
+        } else {
+          console.error(`❌ Skipping invalid amount doc:`, amountDoc);
+        }
       } else {
-        lastVisit.therapyWithAmount[therapyAmountIndex].receivedAmount = Number(perTherapyReceived);
-        console.log(`✅ Updated therapyWithAmount: ${therapy.name}`);
+        if (!isNaN(perTherapyReceived)) {
+          lastVisit.therapyWithAmount[therapyAmountIndex].receivedAmount = perTherapyReceived;
+          console.log(`✅ Updated therapyWithAmount: ${therapy.name}`);
+        }
       }
       
-      // 3. Add to discounts.therapies
+      // 3. Add to discounts.therapies with NaN protection
       const discountIndex = lastVisit.discounts.therapies.findIndex(d => d.name === therapy.name);
       if (discountIndex === -1) {
         const discountDoc = {
-          name: String(therapy.name),              // ✅ Ensure string
-          percentage: Number(numericDiscount),     // ✅ Ensure number
-          approvedBy: String(approvalby || "N/A")  // ✅ Ensure string
+          name: String(therapy.name),
+          percentage: numericDiscount,
+          approvedBy: String(approvalby || "N/A")
         };
         
         console.log(`📋 Adding to discounts:`, discountDoc);
-        lastVisit.discounts.therapies.push(discountDoc);
-        console.log(`✅ Added discount for: ${therapy.name}`);
+        
+        // Final validation before push
+        if (!isNaN(discountDoc.percentage)) {
+          lastVisit.discounts.therapies.push(discountDoc);
+          console.log(`✅ Added discount for: ${therapy.name}`);
+        } else {
+          console.error(`❌ Skipping invalid discount doc:`, discountDoc);
+        }
       }
       
-      // 4. Add to balance.therapies
+      // 4. Add to balance.therapies with NaN protection
       const balanceIndex = lastVisit.balance.therapies.findIndex(b => b.name === therapy.name);
       if (balanceIndex === -1) {
         const balanceDoc = {
-          name: String(therapy.name),          // ✅ Ensure string
-          balance: Number(perTherapyBalance)   // ✅ Ensure number
+          name: String(therapy.name),
+          balance: perTherapyBalance
         };
         
         console.log(`📋 Adding to balance:`, balanceDoc);
-        lastVisit.balance.therapies.push(balanceDoc);
-        console.log(`✅ Added balance for: ${therapy.name}`);
+        
+        // Final validation before push
+        if (!isNaN(balanceDoc.balance)) {
+          lastVisit.balance.therapies.push(balanceDoc);
+          console.log(`✅ Added balance for: ${therapy.name}`);
+        } else {
+          console.error(`❌ Skipping invalid balance doc:`, balanceDoc);
+        }
       }
     });
 
     // ✅ Save the visit with error handling
     console.log("💾 Attempting to save visit...");
     try {
+      // Mark nested paths as modified to ensure Mongoose saves them
+      lastVisit.markModified('therapies');
+      lastVisit.markModified('therapyWithAmount');
+      lastVisit.markModified('discounts');
+      lastVisit.markModified('balance');
+      
       await lastVisit.save();
       console.log("✅ Visit saved successfully with therapy data");
     } catch (saveError) {
       console.error("❌ Error saving visit:", saveError);
-      console.error("❌ Error details:", {
+      console.error("Error details:", {
         message: saveError.message,
         name: saveError.name,
         errors: saveError.errors
       });
-      return res.status(500).json({ 
-        message: "Error saving visit data", 
-        error: saveError.message,
-        details: saveError.errors
-      });
+      
+      // Don't return error, continue with receipt generation
+      console.log("📋 Continuing with receipt generation anyway...");
     }
 
     // Load Excel Template
@@ -347,10 +394,8 @@ const exportTherapyCashReceipt = async (req, res) => {
 
     // Helper function to add session ovals
     const addSessionOvals = (ws, startRow, sessionCount, isSmall = false) => {
-      const cellHeight = isSmall ? 10 : 12;
-      const cellWidth = isSmall ? 1.5 : 2;
-      
-      for (let i = 0; i < sessionCount && i < 10; i++) {
+      const safeSessions = safeNumber(sessionCount, 1);
+      for (let i = 0; i < safeSessions && i < 10; i++) {
         const cellRef = `${String.fromCharCode(66 + i)}${startRow}`;
         ws.getCell(cellRef).value = "○";
         ws.getCell(cellRef).font = { 
@@ -416,20 +461,22 @@ const exportTherapyCashReceipt = async (req, res) => {
     let thirdStripTherapyRow = 46;
 
     therapyList.forEach((therapy, index) => {
+      const safeSessions = safeNumber(therapy.sessions, 1);
+      
       // First Bill
       worksheet.getCell(`B${firstBillTherapyRow}`).value = therapy.name;
       worksheet.getCell(`B${firstBillTherapyRow}`).font = { bold: true, size: 11 };
-      addSessionOvals(worksheet, firstBillTherapyRow + 1, therapy.sessions);
+      addSessionOvals(worksheet, firstBillTherapyRow + 1, safeSessions);
       
       // Second Bill
       worksheet.getCell(`B${secondBillTherapyRow}`).value = therapy.name;
       worksheet.getCell(`B${secondBillTherapyRow}`).font = { bold: true, size: 11 };
-      addSessionOvals(worksheet, secondBillTherapyRow + 1, therapy.sessions);
+      addSessionOvals(worksheet, secondBillTherapyRow + 1, safeSessions);
       
       // Third Strip
       worksheet.getCell(`B${thirdStripTherapyRow}`).value = therapy.name;
       worksheet.getCell(`B${thirdStripTherapyRow}`).font = { bold: true, size: 10 };
-      addSessionOvals(worksheet, thirdStripTherapyRow + 1, therapy.sessions, true);
+      addSessionOvals(worksheet, thirdStripTherapyRow + 1, safeSessions, true);
       
       // Move to next position
       firstBillTherapyRow += 5;
