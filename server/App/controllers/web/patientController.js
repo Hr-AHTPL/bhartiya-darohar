@@ -98,6 +98,9 @@ const exportPrescriptionFormToExcel = async (req, res) => {
   }
 };
 
+// ✅ FIXED exportTherapyCashReceipt function
+// Replace your existing function (lines 101-393) with this
+
 const exportTherapyCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
@@ -108,6 +111,16 @@ const exportTherapyCashReceipt = async (req, res) => {
       approvalby,
       therapies, // Array of therapy objects: [{name: "Therapy1", sessions: 5}, {name: "Therapy2", sessions: 3}]
     } = req.query;
+
+    console.log("📝 Received therapy receipt request:", {
+      patientId,
+      feeAmount,
+      receivedAmount,
+      discount,
+      approvalby,
+      therapies: typeof therapies,
+      therapiesRaw: therapies
+    });
 
     // Fetch patient details
     const patient = await patientModel.findById(patientId);
@@ -139,14 +152,50 @@ const exportTherapyCashReceipt = async (req, res) => {
     const totalAfterDiscount = numericFee - (numericFee * numericDiscount) / 100;
     const balance = totalAfterDiscount - numericReceived;
 
-    // Parse therapies from query string (if sent as JSON string)
+    // ✅ FIXED: Parse therapies from query string with better error handling
     let therapyList = [];
     if (therapies) {
       try {
         therapyList = typeof therapies === "string" ? JSON.parse(therapies) : therapies;
+        
+        // ✅ Validate parsed therapies
+        if (!Array.isArray(therapyList)) {
+          console.error("❌ Therapies is not an array:", therapyList);
+          return res.status(400).json({ message: "Therapies must be an array" });
+        }
+
+        // ✅ Filter out invalid therapy objects
+        therapyList = therapyList.filter(therapy => {
+          if (!therapy || typeof therapy !== 'object') {
+            console.warn("⚠️ Skipping invalid therapy (not an object):", therapy);
+            return false;
+          }
+          if (!therapy.name || therapy.name.trim() === '') {
+            console.warn("⚠️ Skipping therapy with empty name:", therapy);
+            return false;
+          }
+          if (typeof therapy.sessions !== 'number' || therapy.sessions < 1) {
+            console.warn("⚠️ Skipping therapy with invalid sessions:", therapy);
+            return false;
+          }
+          return true;
+        });
+
+        console.log("✅ Validated therapy list:", therapyList);
+
+        if (therapyList.length === 0) {
+          return res.status(400).json({ message: "No valid therapies provided" });
+        }
+
       } catch (e) {
-        return res.status(400).json({ message: "Invalid therapies format" });
+        console.error("❌ Error parsing therapies:", e);
+        return res.status(400).json({ 
+          message: "Invalid therapies format", 
+          error: e.message 
+        });
       }
+    } else {
+      return res.status(400).json({ message: "Therapies parameter is required" });
     }
 
     // Validate max 3 therapies
@@ -154,25 +203,31 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(400).json({ message: "Maximum 3 therapies allowed" });
     }
 
-    // Update visit with therapy information
+    // ✅ FIXED: Update visit with therapy information - only add valid therapies
     therapyList.forEach((therapy) => {
-      lastVisit.therapies.push(therapy.name);
-      lastVisit.therapyWithAmount.push({
-        name: therapy.name,
-        receivedAmount: receivedAmount,
-      });
-      lastVisit.discounts.therapies.push({
-        name: therapy.name,
-        percentage: discount,
-        approvedBy: approvalby,
-      });
-      lastVisit.balance.therapies.push({
-        name: therapy.name,
-        balance: balance,
-      });
+      // Double-check before pushing
+      if (therapy.name && therapy.name.trim() !== '') {
+        lastVisit.therapies.push(therapy.name);
+        lastVisit.therapyWithAmount.push({
+          name: therapy.name,
+          receivedAmount: receivedAmount,
+        });
+        lastVisit.discounts.therapies.push({
+          name: therapy.name,
+          percentage: discount,
+          approvedBy: approvalby || "N/A",
+        });
+        lastVisit.balance.therapies.push({
+          name: therapy.name,
+          balance: balance,
+        });
+        console.log(`✅ Added therapy to visit: ${therapy.name}`);
+      }
     });
 
+    console.log("💾 Saving visit with therapies...");
     await lastVisit.save();
+    console.log("✅ Visit saved successfully");
 
     // Load Excel Template
     const templatePath = path.join(
@@ -187,7 +242,7 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(400).json({ message: "Worksheet not found" });
     }
 
-    const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`;
+    const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
     const address = `${patient.houseno || ""}, ${patient.city || ""}`;
 
     // Helper function to update cells
@@ -199,106 +254,45 @@ const exportTherapyCashReceipt = async (req, res) => {
 
     // =================== FIRST BILL (TOP COPY) ===================
     const firstBillCells = {
-      // Bill No. (Row 5)
       B5: billNumber,
-      
-      // ID No. (Row 5)
       E5: patient.idno,
-      
-      // Date (Row 5)
       H5: lastVisit.date,
-      
-      // Name (Row 6)
       B6: fullName,
-      
-      // Sex (Row 6)
       F6: patient.gender || "",
-      
-      // Age (Row 6)
       H6: patient.age || "",
-      
-      // Address (Row 7)
       B7: address,
-      
-      // Mobile (Row 7)
       H7: patient.phone || "",
-      
-      // Fee (Row 8)
       B8: numericFee,
-      
-      // Discount (%) (Row 8)
       D8: numericDiscount,
-      
-      // Approved by (Row 8)
       H8: approvalby || "",
-      
-      // Total (Row 9)
       B9: totalAfterDiscount,
-      
-      // Received Amount (Row 9)
       D9: numericReceived,
-      
-      // Balance (Row 9)
       H9: balance,
     };
 
     // =================== SECOND BILL (MIDDLE COPY) ===================
     const secondBillCells = {
-      // Bill No. (Row 25)
       B25: billNumber,
-      
-      // ID No. (Row 25)
       E25: patient.idno,
-      
-      // Date (Row 25)
       H25: lastVisit.date,
-      
-      // Name (Row 26)
       B26: fullName,
-      
-      // Sex (Row 26)
       F26: patient.gender || "",
-      
-      // Age (Row 26)
       H26: patient.age || "",
-      
-      // Address (Row 27)
       B27: address,
-      
-      // Mobile (Row 27)
       H27: patient.phone || "",
-      
-      // Fee (Row 28)
       B28: numericFee,
-      
-      // Discount (%) (Row 28)
       D28: numericDiscount,
-      
-      // Approved by (Row 28)
       H28: approvalby || "",
-      
-      // Total (Row 29)
       B29: totalAfterDiscount,
-      
-      // Received Amount (Row 29)
       D29: numericReceived,
-      
-      // Balance (Row 29)
       H29: balance,
     };
 
     // =================== THIRD STRIP (BOTTOM) ===================
     const thirdStripCells = {
-      // ID No. (Row 45)
       B45: patient.idno,
-      
-      // Name (Row 45)
       E45: fullName,
-      
-      // Date (Row 45)
       H45: lastVisit.date,
-      
-      // Bill No. (Row 46)
       B46: billNumber,
     };
 
@@ -309,6 +303,28 @@ const exportTherapyCashReceipt = async (req, res) => {
 
     // =================== ADD THERAPY NAMES AND OVALS ===================
     
+    // Helper function to add session ovals
+    function addSessionOvals(worksheet, startRow, sessionCount, isSmall = false) {
+      const ovalColumns = ["B", "C", "D", "E", "F", "G", "H", "I", "J"];
+      const maxOvalsPerRow = 7;
+      const rows = Math.ceil(sessionCount / maxOvalsPerRow);
+      
+      let currentSession = 0;
+      
+      for (let row = 0; row < Math.min(rows, 3); row++) {
+        const currentRow = startRow + row;
+        const ovalsInThisRow = Math.min(maxOvalsPerRow, sessionCount - currentSession);
+        
+        for (let col = 0; col < ovalsInThisRow; col++) {
+          const cell = worksheet.getCell(`${ovalColumns[col]}${currentRow}`);
+          cell.value = "⭕"; // Unicode oval/circle
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.font = { size: isSmall ? 10 : 14 };
+          currentSession++;
+        }
+      }
+    }
+    
     // Starting row for therapies in first bill
     let firstBillTherapyRow = 10;
     // Starting row for therapies in second bill
@@ -317,11 +333,13 @@ const exportTherapyCashReceipt = async (req, res) => {
     let thirdStripTherapyRow = 47;
 
     therapyList.forEach((therapy, index) => {
+      console.log(`📝 Adding therapy ${index + 1}: ${therapy.name} (${therapy.sessions} sessions)`);
+      
       // First Bill - Add therapy name
       worksheet.getCell(`B${firstBillTherapyRow}`).value = therapy.name;
       worksheet.getCell(`B${firstBillTherapyRow}`).font = { bold: true, size: 11 };
       
-      // First Bill - Add ovals for sessions (starting from row after therapy name)
+      // First Bill - Add ovals for sessions
       const firstBillOvalRow = firstBillTherapyRow + 1;
       addSessionOvals(worksheet, firstBillOvalRow, therapy.sessions);
       
@@ -362,33 +380,16 @@ const exportTherapyCashReceipt = async (req, res) => {
       )}_${new Date().toISOString().split("T")[0]}.xlsx`
     );
 
-    function addSessionOvals(worksheet, startRow, sessionCount, isSmall = false) {
-  const ovalColumns = ["B", "C", "D", "E", "F", "G", "H", "I", "J"];
-  const maxOvalsPerRow = 7;
-  const rows = Math.ceil(sessionCount / maxOvalsPerRow);
-  
-  let currentSession = 0;
-  
-  for (let row = 0; row < Math.min(rows, 3); row++) {
-    const currentRow = startRow + row;
-    const ovalsInThisRow = Math.min(maxOvalsPerRow, sessionCount - currentSession);
-    
-    for (let col = 0; col < ovalsInThisRow; col++) {
-      const cell = worksheet.getCell(`${ovalColumns[col]}${currentRow}`);
-      cell.value = "⭕"; // Unicode oval/circle
-      cell.alignment = { horizontal: "center", vertical: "middle" };
-      cell.font = { size: isSmall ? 10 : 14 };
-      currentSession++;
-    }
-  }
-}
-
+    console.log("✅ Therapy receipt generated successfully");
     res.send(buffer);
+    
   } catch (err) {
-    console.error("Error exporting therapy cash receipt:", err);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: err.message });
+    console.error("❌ Error exporting therapy cash receipt:", err);
+    res.status(500).json({ 
+      message: "Internal Server Error", 
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 };
 
