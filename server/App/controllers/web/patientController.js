@@ -98,6 +98,11 @@ const exportPrescriptionFormToExcel = async (req, res) => {
   }
 };
 
+// ============================================================================
+// COMPLETE FIXED VERSION - exportTherapyCashReceipt Function
+// Replace the entire function (lines 101-380) in patientController.js
+// ============================================================================
+
 const exportTherapyCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
@@ -203,35 +208,72 @@ const exportTherapyCashReceipt = async (req, res) => {
     // ✅ FIXED: Update visit with therapy information
     console.log("💾 Updating visit with therapy data...");
     
+    // Initialize nested objects if they don't exist
+    if (!lastVisit.therapyWithAmount) lastVisit.therapyWithAmount = [];
+    if (!lastVisit.discounts) lastVisit.discounts = {};
+    if (!lastVisit.discounts.therapies) lastVisit.discounts.therapies = [];
+    if (!lastVisit.balance) lastVisit.balance = {};
+    if (!lastVisit.balance.therapies) lastVisit.balance.therapies = [];
+    if (!lastVisit.therapies) lastVisit.therapies = [];
+    
     therapyList.forEach((therapy, index) => {
       console.log(`📝 Adding therapy ${index + 1} to visit:`, therapy);
       
-      // ❌ DON'T push to therapies array - causes schema conflict
-      // lastVisit.therapies.push(therapy.name);
+      // Add to main therapies array with proper schema structure (avoid duplicates)
+      const therapyExists = lastVisit.therapies.some(t => t.name === therapy.name);
+      if (!therapyExists) {
+        lastVisit.therapies.push({
+          name: therapy.name,
+          sessions: therapy.sessions || 1,
+          amount: numericFee || 0,
+        });
+      }
       
-      // ✅ Only update arrays that work with our data format
-      lastVisit.therapyWithAmount.push({
-        name: therapy.name,
-        receivedAmount: receivedAmount,
-      });
+      // Add to therapyWithAmount (avoid duplicates) - use NUMERIC values
+      const therapyAmountExists = lastVisit.therapyWithAmount.some(t => t.name === therapy.name);
+      if (!therapyAmountExists) {
+        lastVisit.therapyWithAmount.push({
+          name: therapy.name,
+          receivedAmount: numericReceived || 0,  // ✅ FIXED: Use numeric value
+        });
+      }
       
-      lastVisit.discounts.therapies.push({
-        name: therapy.name,
-        percentage: discount,
-        approvedBy: approvalby || "N/A",
-      });
+      // Add to discounts.therapies (avoid duplicates) - use NUMERIC values
+      const therapyDiscountExists = lastVisit.discounts.therapies.some(t => t.name === therapy.name);
+      if (!therapyDiscountExists) {
+        lastVisit.discounts.therapies.push({
+          name: therapy.name,
+          percentage: numericDiscount || 0,  // ✅ FIXED: Use numeric value
+          approvedBy: approvalby || "N/A",
+        });
+      }
       
-      lastVisit.balance.therapies.push({
-        name: therapy.name,
-        balance: balance,
-      });
+      // Add to balance.therapies (avoid duplicates)
+      const therapyBalanceExists = lastVisit.balance.therapies.some(t => t.name === therapy.name);
+      if (!therapyBalanceExists) {
+        lastVisit.balance.therapies.push({
+          name: therapy.name,
+          balance: balance || 0,
+        });
+      }
     });
 
     try {
+      // Mark nested paths as modified to ensure Mongoose saves them
+      lastVisit.markModified('therapies');
+      lastVisit.markModified('therapyWithAmount');
+      lastVisit.markModified('discounts');
+      lastVisit.markModified('balance');
+      
       await lastVisit.save();
       console.log("✅ Visit saved with therapy data");
     } catch (saveError) {
-      console.error("⚠️ Warning: Could not save visit data:", saveError.message);
+      console.error("⚠️ Error saving visit data:", saveError);
+      console.error("Error details:", {
+        message: saveError.message,
+        name: saveError.name,
+        errors: saveError.errors
+      });
       console.log("📋 Continuing with receipt generation anyway...");
       // Continue with receipt generation even if save fails
     }
