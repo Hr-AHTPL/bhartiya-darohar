@@ -332,7 +332,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     // Load Excel Template
     const templatePath = path.join(
       __dirname,
-      "../../assets/therapyReceipt.xlsx"
+      "../../assets/receiptGenerationTherapy.xlsx"
     );
     
     if (!fs.existsSync(templatePath)) {
