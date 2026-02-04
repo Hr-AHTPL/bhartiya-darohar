@@ -99,8 +99,10 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 };
 
 // ============================================================================
-// FIXED VERSION - exportTherapyCashReceipt Function
-// Replace lines 106-422 in patientController.js with this version
+// CRITICAL FIX - exportTherapyCashReceipt Function
+// The issue: Mongoose is strict about types in subdocument arrays
+// Solution: Explicitly convert ALL values to correct types before pushing
+// Replace lines 106-422 in patientController.js
 // ============================================================================
 
 const exportTherapyCashReceipt = async (req, res) => {
@@ -146,7 +148,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
 
-    // ✅ FIX: Ensure all numeric values are properly converted
+    // ✅ CRITICAL: Convert ALL values to proper types
     const numericFee = Number(feeAmount) || 0;
     const numericReceived = Number(receivedAmount) || 0;
     const numericDiscount = Number(discount) || 0;
@@ -216,16 +218,16 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(400).json({ message: "Maximum 3 therapies allowed" });
     }
 
-    // ✅ CRITICAL FIX: Update visit with therapy information
+    // ✅ CRITICAL FIX: Initialize nested arrays BEFORE manipulation
     console.log("💾 Updating visit with therapy data...");
     
-    // Initialize nested objects if they don't exist
+    // Make sure arrays exist
+    if (!lastVisit.therapies) lastVisit.therapies = [];
     if (!lastVisit.therapyWithAmount) lastVisit.therapyWithAmount = [];
     if (!lastVisit.discounts) lastVisit.discounts = {};
     if (!lastVisit.discounts.therapies) lastVisit.discounts.therapies = [];
     if (!lastVisit.balance) lastVisit.balance = {};
     if (!lastVisit.balance.therapies) lastVisit.balance.therapies = [];
-    if (!lastVisit.therapies) lastVisit.therapies = [];
     
     // Calculate per-therapy amounts
     const perTherapyFee = numericFee / therapyList.length;
@@ -236,63 +238,84 @@ const exportTherapyCashReceipt = async (req, res) => {
     therapyList.forEach((therapy, index) => {
       console.log(`📝 Processing therapy ${index + 1}:`, therapy);
       
-      // ✅ FIX 1: Add to main therapies array - avoid duplicates
+      // ✅ CRITICAL FIX: Create plain objects with EXPLICIT type conversion
+      // This avoids Mongoose casting issues
+      
+      // 1. Add to main therapies array
       const therapyExists = lastVisit.therapies.some(t => t.name === therapy.name);
       if (!therapyExists) {
-        lastVisit.therapies.push({
-          name: therapy.name,
-          sessions: Number(therapy.sessions) || 1,  // ✅ Ensure it's a number
-          amount: perTherapyFee,  // ✅ Use calculated per-therapy amount
-        });
+        // Create a PLAIN object with explicit types
+        const therapyDoc = {
+          name: String(therapy.name),           // ✅ Ensure string
+          sessions: Number(therapy.sessions),   // ✅ Ensure number
+          amount: Number(perTherapyFee)         // ✅ Ensure number
+        };
+        
+        console.log(`📋 Adding to therapies:`, therapyDoc);
+        lastVisit.therapies.push(therapyDoc);
         console.log(`✅ Added to therapies array: ${therapy.name}`);
       }
       
-      // ✅ FIX 2: Add to therapyWithAmount - avoid duplicates and ENSURE NUMBER TYPE
+      // 2. Add to therapyWithAmount
       const therapyAmountIndex = lastVisit.therapyWithAmount.findIndex(t => t.name === therapy.name);
       if (therapyAmountIndex === -1) {
-        // Add new entry with GUARANTEED numeric value
-        lastVisit.therapyWithAmount.push({
-          name: therapy.name,
-          receivedAmount: perTherapyReceived  // ✅ CRITICAL: Must be a Number, not string
-        });
-        console.log(`✅ Added to therapyWithAmount: ${therapy.name} with amount ${perTherapyReceived}`);
+        const amountDoc = {
+          name: String(therapy.name),                    // ✅ Ensure string
+          receivedAmount: Number(perTherapyReceived)     // ✅ Ensure number
+        };
+        
+        console.log(`📋 Adding to therapyWithAmount:`, amountDoc);
+        lastVisit.therapyWithAmount.push(amountDoc);
+        console.log(`✅ Added to therapyWithAmount: ${therapy.name}`);
       } else {
-        // Update existing entry with GUARANTEED numeric value
-        lastVisit.therapyWithAmount[therapyAmountIndex].receivedAmount = perTherapyReceived;
-        console.log(`✅ Updated therapyWithAmount: ${therapy.name} with amount ${perTherapyReceived}`);
+        lastVisit.therapyWithAmount[therapyAmountIndex].receivedAmount = Number(perTherapyReceived);
+        console.log(`✅ Updated therapyWithAmount: ${therapy.name}`);
       }
       
-      // ✅ FIX 3: Add discount info - avoid duplicates
+      // 3. Add to discounts.therapies
       const discountIndex = lastVisit.discounts.therapies.findIndex(d => d.name === therapy.name);
       if (discountIndex === -1) {
-        lastVisit.discounts.therapies.push({
-          name: therapy.name,
-          percentage: numericDiscount,
-          approvedBy: approvalby || "NONE"
-        });
+        const discountDoc = {
+          name: String(therapy.name),              // ✅ Ensure string
+          percentage: Number(numericDiscount),     // ✅ Ensure number
+          approvedBy: String(approvalby || "N/A")  // ✅ Ensure string
+        };
+        
+        console.log(`📋 Adding to discounts:`, discountDoc);
+        lastVisit.discounts.therapies.push(discountDoc);
         console.log(`✅ Added discount for: ${therapy.name}`);
       }
       
-      // ✅ FIX 4: Add balance info - avoid duplicates
+      // 4. Add to balance.therapies
       const balanceIndex = lastVisit.balance.therapies.findIndex(b => b.name === therapy.name);
       if (balanceIndex === -1) {
-        lastVisit.balance.therapies.push({
-          name: therapy.name,
-          balance: perTherapyBalance
-        });
+        const balanceDoc = {
+          name: String(therapy.name),          // ✅ Ensure string
+          balance: Number(perTherapyBalance)   // ✅ Ensure number
+        };
+        
+        console.log(`📋 Adding to balance:`, balanceDoc);
+        lastVisit.balance.therapies.push(balanceDoc);
         console.log(`✅ Added balance for: ${therapy.name}`);
       }
     });
 
-    // ✅ Save the visit with proper error handling
+    // ✅ Save the visit with error handling
+    console.log("💾 Attempting to save visit...");
     try {
       await lastVisit.save();
       console.log("✅ Visit saved successfully with therapy data");
     } catch (saveError) {
       console.error("❌ Error saving visit:", saveError);
+      console.error("❌ Error details:", {
+        message: saveError.message,
+        name: saveError.name,
+        errors: saveError.errors
+      });
       return res.status(500).json({ 
         message: "Error saving visit data", 
-        error: saveError.message 
+        error: saveError.message,
+        details: saveError.errors
       });
     }
 
