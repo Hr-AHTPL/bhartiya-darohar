@@ -362,17 +362,7 @@ const exportTherapyCashReceipt = async (req, res) => {
       )}_${new Date().toISOString().split("T")[0]}.xlsx`
     );
 
-    res.send(buffer);
-  } catch (err) {
-    console.error("Error exporting therapy cash receipt:", err);
-    res
-      .status(500)
-      .json({ message: "Internal Server Error", error: err.message });
-  }
-};
-
-// Helper function to add session ovals
-function addSessionOvals(worksheet, startRow, sessionCount, isSmall = false) {
+    function addSessionOvals(worksheet, startRow, sessionCount, isSmall = false) {
   const ovalColumns = ["B", "C", "D", "E", "F", "G", "H", "I", "J"];
   const maxOvalsPerRow = 7;
   const rows = Math.ceil(sessionCount / maxOvalsPerRow);
@@ -392,6 +382,18 @@ function addSessionOvals(worksheet, startRow, sessionCount, isSmall = false) {
     }
   }
 }
+
+    res.send(buffer);
+  } catch (err) {
+    console.error("Error exporting therapy cash receipt:", err);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: err.message });
+  }
+};
+
+// Helper function to add session ovals
+
 
 
 
