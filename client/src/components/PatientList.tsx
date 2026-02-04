@@ -984,58 +984,88 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
   }
 
   try {
-    // Prepare therapy names for display
-    const therapyNames = addedTherapies.map(t => 
-      `${t.name} (${t.sessions} session${t.sessions > 1 ? 's' : ''})`
-    ).join(', ');
+    let endpoint;
+    let params: any = {
+      feeAmount: numericFee,
+      receivedAmount: numericReceived,
+      discount: discount,
+      approvalby: approvalby,
+    };
 
-    const response = await axios.get(
-      `${API_BASE_URL}/api/website/enquiry/prakriti-registration/${selectedPatient.id}`,
-      {
-        responseType: "blob",
-        params: {
-          feeAmount: numericFee,
-          receivedAmount: numericReceived,
-          purpose: finalPurpose,
-          ...(finalPurpose === "Therapy" && { 
-            therapyName: therapyNames,
-            therapies: JSON.stringify(addedTherapies) // Send full therapy array
-          }),
-          discount: discount,
-          approvalby: approvalby,
-        },
+    // ⭐ NEW: Choose endpoint based on purpose
+    if (finalPurpose === "Therapy" && addedTherapies.length > 0) {
+      // Use NEW therapy endpoint with sessions
+      endpoint = `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`;
+      
+      // Format therapies array for the new endpoint
+      params.therapies = JSON.stringify(
+        addedTherapies.map(t => ({
+          name: t.name,
+          sessions: t.sessions
+        }))
+      );
+      
+      console.log("🎯 Using NEW therapy endpoint:", endpoint);
+      console.log("📦 Therapy data:", params.therapies);
+    } else {
+      // Use OLD endpoint for other purposes (Consultation, Prakriti, Others)
+      endpoint = `${API_BASE_URL}/api/website/enquiry/prakriti-registration/${selectedPatient.id}`;
+      params.purpose = finalPurpose;
+      
+      // For old endpoint, also include therapyName if it was Therapy (backward compatibility)
+      if (finalPurpose === "Therapy") {
+        const therapyNames = addedTherapies.map(t => 
+          `${t.name} (${t.sessions} session${t.sessions > 1 ? 's' : ''})`
+        ).join(', ');
+        params.therapyName = therapyNames;
       }
-    );
+      
+      console.log("📝 Using OLD receipt endpoint:", endpoint);
+    }
+
+    const response = await axios.get(endpoint, {
+      responseType: "blob",
+      params: params,
+    });
 
     const blob = new Blob([response.data], {
-      type: "application/pdf",
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
     const url = window.URL.createObjectURL(blob);
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = `cash_receipt_${selectedPatient.name}_${finalPurpose.replace(
-      /\s+/g,
-      "_"
-    )}.xlsx`;
+    
+    // Different filename for therapy vs other receipts
+    const filename = finalPurpose === "Therapy" && addedTherapies.length > 0
+      ? `therapy_receipt_${selectedPatient.name.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`
+      : `cash_receipt_${selectedPatient.name.replace(/\s+/g, "_")}_${finalPurpose.replace(/\s+/g, "_")}.xlsx`;
+    
+    a.download = filename;
     a.click();
 
     window.URL.revokeObjectURL(url);
+    
     console.log(
-      `Cash receipt generated for ${selectedPatient.name} - Purpose: ${finalPurpose}, Fee: ₹${numericFee}, Received: ₹${numericReceived}`
+      `✅ Receipt generated for ${selectedPatient.name} - Purpose: ${finalPurpose}, Fee: ₹${numericFee}, Received: ₹${numericReceived}`
     );
     
+    // Reset form
     setOtherPurpose("");
     setFeeAmount("");
     setReceivedAmount("");
     setReceiptPurpose("");
     setTherapyName("");
-    setAddedTherapies([]); // ADD THIS
-    setCurrentTherapySessions("1"); // ADD THIS
+    setAddedTherapies([]);
+    setCurrentTherapySessions("1");
+    setDiscountPercentage("");
+    setApprovedBy("");
     setShowCashReceiptDialog(false);
+    
+    alert("Receipt generated successfully!");
   } catch (error) {
-    console.error("Error generating cash receipt:", error);
-    alert("Failed to generate cash receipt.");
+    console.error("❌ Error generating cash receipt:", error);
+    alert("Failed to generate cash receipt. Please check console for details.");
   }
 };
 
