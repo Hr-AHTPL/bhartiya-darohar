@@ -98,33 +98,16 @@ const exportPrescriptionFormToExcel = async (req, res) => {
   }
 };
 
-// ============================================================================
-// ABSOLUTE FINAL FIX - exportTherapyCashReceipt Function
-// Root Issue: Mongoose subdocument array push() has type coercion issues
-// Solution: Use MongoDB's $addToSet operator directly to avoid Mongoose casting
-// Replace lines 106-422 in patientController.js
-// ============================================================================
+
+// FINAL VERSION - Add this to patientController.js
+// This version is optimized based on your screenshot template structure
+
+// CORRECTED VERSION - Add this to patientController.js
+// This function fetches therapies from the database, not from query parameters
 
 const exportTherapyCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
-    const {
-      feeAmount,
-      receivedAmount,
-      discount,
-      approvalby,
-      therapies,
-    } = req.query;
-
-    console.log("📝 Therapy receipt request:", {
-      patientId,
-      therapiesRaw: therapies,
-      therapiesType: typeof therapies,
-      feeAmount,
-      receivedAmount,
-      discount,
-      approvalby
-    });
 
     // Fetch patient details
     const patient = await patientModel.findById(patientId);
@@ -132,7 +115,7 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(404).json({ message: "Patient not found" });
     }
 
-    // Fetch last visit
+    // Fetch last visit with therapies
     const lastVisit = await visitModel
       .findOne({ patientId: patient._id })
       .sort({ createdAt: -1 });
@@ -140,6 +123,18 @@ const exportTherapyCashReceipt = async (req, res) => {
     if (!lastVisit) {
       return res.status(404).json({ message: "No last visit found" });
     }
+
+    // Get therapies from database (already stored in visit)
+    const therapies = lastVisit.therapies || [];
+    
+    if (therapies.length === 0) {
+      return res.status(400).json({ 
+        message: "No therapies found for this patient's last visit" 
+      });
+    }
+
+    // Limit to first 3 therapies for the receipt
+    const therapyList = therapies.slice(0, 3);
 
     // Generate Bill Number
     const billCounter = await counterModel.findOneAndUpdate(
@@ -149,185 +144,49 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
 
-    // Safe number conversion
-    const safeNumber = (value, defaultValue = 0) => {
-      const num = Number(value);
-      return isNaN(num) ? defaultValue : num;
-    };
+    // Calculate totals from therapyWithAmount (amounts already paid for therapies)
+    let totalFee = 0;
+    let totalReceived = 0;
+    let totalDiscount = 0;
 
-    const numericFee = safeNumber(feeAmount, 0);
-    const numericReceived = safeNumber(receivedAmount, 0);
-    const numericDiscount = safeNumber(discount, 0);
-    const totalAfterDiscount = numericFee - (numericFee * numericDiscount) / 100;
-    const balance = totalAfterDiscount - numericReceived;
-
-    console.log("💰 Financial calculations:", {
-      numericFee,
-      numericReceived,
-      numericDiscount,
-      totalAfterDiscount,
-      balance
-    });
-
-    // Parse and validate therapies
-    let therapyList = [];
-    if (therapies) {
-      try {
-        therapyList = typeof therapies === "string" ? JSON.parse(therapies) : therapies;
-        
-        console.log("📦 Parsed therapies:", therapyList);
-        
-        if (!Array.isArray(therapyList)) {
-          return res.status(400).json({ message: "Therapies must be an array" });
-        }
-
-        // Validate each therapy
-        therapyList = therapyList.filter((therapy, index) => {
-          console.log(`🔍 Validating therapy ${index}:`, therapy);
-          
-          if (!therapy || typeof therapy !== 'object') {
-            console.warn(`⚠️ Invalid therapy at index ${index}:`, therapy);
-            return false;
-          }
-          if (!therapy.name || therapy.name.trim() === '') {
-            console.warn(`⚠️ Therapy at index ${index} has no name:`, therapy);
-            return false;
-          }
-          
-          const sessions = safeNumber(therapy.sessions, 1);
-          if (sessions < 1) {
-            console.warn(`⚠️ Therapy at index ${index} has invalid sessions:`, sessions);
-            return false;
-          }
-          
-          console.log(`✅ Valid therapy ${index}: ${therapy.name} (${sessions} sessions)`);
-          return true;
-        });
-
-        console.log("✅ Final therapy list:", therapyList);
-
-        if (therapyList.length === 0) {
-          return res.status(400).json({ message: "No valid therapies provided" });
-        }
-
-      } catch (e) {
-        console.error("❌ Error parsing therapies:", e);
-        return res.status(400).json({ 
-          message: "Invalid therapies format", 
-          error: e.message 
-        });
+    // Calculate from the therapies prescribed
+    therapyList.forEach(therapy => {
+      const fee = Number(therapy.amount || 0);
+      totalFee += fee;
+      
+      // Find received amount for this therapy
+      const therapyPayment = lastVisit.therapyWithAmount?.find(
+        t => t.name === therapy.name
+      );
+      if (therapyPayment) {
+        totalReceived += Number(therapyPayment.receivedAmount || 0);
       }
-    } else {
-      return res.status(400).json({ message: "Therapies parameter is required" });
-    }
 
-    // Validate max 3 therapies
-    if (therapyList.length > 3) {
-      return res.status(400).json({ message: "Maximum 3 therapies allowed" });
-    }
-
-    // ✅ CRITICAL FIX: Use MongoDB update operators instead of Mongoose push
-    console.log("💾 Updating visit with therapy data using MongoDB operators...");
-    
-    // Calculate per-therapy amounts
-    const perTherapyFee = numericFee / therapyList.length;
-    const perTherapyReceived = numericReceived / therapyList.length;
-    const perTherapyAfterDiscount = perTherapyFee - (perTherapyFee * numericDiscount) / 100;
-    const perTherapyBalance = perTherapyAfterDiscount - perTherapyReceived;
-
-    console.log("💵 Per-therapy amounts:", {
-      perTherapyFee,
-      perTherapyReceived,
-      perTherapyAfterDiscount,
-      perTherapyBalance
-    });
-
-    // Build update operations for each therapy
-    const updateOps = {};
-    
-    therapyList.forEach((therapy, index) => {
-      console.log(`📝 Processing therapy ${index + 1}:`, therapy);
-      
-      const safeSessions = safeNumber(therapy.sessions, 1);
-      const therapyName = therapy.name;
-      
-      // Check if therapy already exists to avoid duplicates
-      const therapyExists = lastVisit.therapies?.some(t => t.name === therapyName);
-      const therapyAmountExists = lastVisit.therapyWithAmount?.some(t => t.name === therapyName);
-      const discountExists = lastVisit.discounts?.therapies?.some(t => t.name === therapyName);
-      const balanceExists = lastVisit.balance?.therapies?.some(t => t.name === therapyName);
-      
-      if (!therapyExists) {
-        if (!updateOps.$push) updateOps.$push = {};
-        if (!updateOps.$push.therapies) updateOps.$push.therapies = { $each: [] };
-        
-        updateOps.$push.therapies.$each.push({
-          name: therapyName,
-          sessions: safeSessions,
-          amount: perTherapyFee
-        });
-        console.log(`➕ Will add to therapies: ${therapyName}`);
-      }
-      
-      if (!therapyAmountExists) {
-        if (!updateOps.$push) updateOps.$push = {};
-        if (!updateOps.$push.therapyWithAmount) updateOps.$push.therapyWithAmount = { $each: [] };
-        
-        updateOps.$push.therapyWithAmount.$each.push({
-          name: therapyName,
-          receivedAmount: perTherapyReceived
-        });
-        console.log(`➕ Will add to therapyWithAmount: ${therapyName}`);
-      }
-      
-      if (!discountExists) {
-        if (!updateOps.$push) updateOps.$push = {};
-        if (!updateOps.$push['discounts.therapies']) updateOps.$push['discounts.therapies'] = { $each: [] };
-        
-        updateOps.$push['discounts.therapies'].$each.push({
-          name: therapyName,
-          percentage: numericDiscount,
-          approvedBy: approvalby || "N/A"
-        });
-        console.log(`➕ Will add discount for: ${therapyName}`);
-      }
-      
-      if (!balanceExists) {
-        if (!updateOps.$push) updateOps.$push = {};
-        if (!updateOps.$push['balance.therapies']) updateOps.$push['balance.therapies'] = { $each: [] };
-        
-        updateOps.$push['balance.therapies'].$each.push({
-          name: therapyName,
-          balance: perTherapyBalance
-        });
-        console.log(`➕ Will add balance for: ${therapyName}`);
+      // Find discount for this therapy
+      const therapyDiscount = lastVisit.discounts?.therapies?.find(
+        t => t.name === therapy.name
+      );
+      if (therapyDiscount) {
+        const discountAmount = (fee * Number(therapyDiscount.percentage || 0)) / 100;
+        totalDiscount += discountAmount;
       }
     });
 
-    // Perform the update if there are operations
-    if (Object.keys(updateOps).length > 0) {
-      console.log("💾 Executing MongoDB update operations...");
-      console.log("Update operations:", JSON.stringify(updateOps, null, 2));
-      
-      try {
-        await visitModel.findByIdAndUpdate(
-          lastVisit._id,
-          updateOps,
-          { new: true, runValidators: true }
-        );
-        console.log("✅ Visit updated successfully with therapy data");
-      } catch (updateError) {
-        console.error("❌ Error updating visit:", updateError);
-        console.error("Error details:", {
-          message: updateError.message,
-          name: updateError.name
-        });
-        // Continue with receipt generation even if update fails
-        console.log("📋 Continuing with receipt generation anyway...");
+    const totalAfterDiscount = totalFee - totalDiscount;
+    const balance = totalAfterDiscount - totalReceived;
+    const discountPercentage = totalFee > 0 ? ((totalDiscount / totalFee) * 100).toFixed(2) : 0;
+
+    // Get approved by names
+    const approvedByList = [];
+    therapyList.forEach(therapy => {
+      const therapyDiscount = lastVisit.discounts?.therapies?.find(
+        t => t.name === therapy.name
+      );
+      if (therapyDiscount?.approvedBy) {
+        approvedByList.push(therapyDiscount.approvedBy);
       }
-    } else {
-      console.log("ℹ️  No new therapies to add (all already exist)");
-    }
+    });
+    const approvedBy = [...new Set(approvedByList)].join(", ") || "";
 
     // Load Excel Template
     const templatePath = path.join(
@@ -336,146 +195,193 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     
     if (!fs.existsSync(templatePath)) {
-      console.error("❌ Template file not found at:", templatePath);
-      return res.status(500).json({ 
+      return res.status(404).json({ 
         message: "Template file not found",
-        path: templatePath 
+        path: templatePath
       });
     }
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(templatePath);
-    const worksheet = workbook.getWorksheet("Sheet1");
+    const worksheet = workbook.getWorksheet("Cash Receipt") || workbook.getWorksheet("Sheet1");
 
     if (!worksheet) {
-      return res.status(400).json({ message: "Worksheet 'Sheet1' not found in template" });
+      return res.status(400).json({ 
+        message: "Worksheet 'Cash Receipt' or 'Sheet1' not found in template" 
+      });
     }
 
-    // Patient details
+    // Prepare data
+    const date = lastVisit.date || new Date().toLocaleDateString('en-GB');
     const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
-    const address = `${patient.houseno || ""}, ${patient.city || ""}`;
+    const address = `${patient.houseno || ""}, ${patient.city || ""}`.trim();
 
-    // Helper function to add session ovals
-    const addSessionOvals = (ws, startRow, sessionCount, isSmall = false) => {
-      const safeSessions = safeNumber(sessionCount, 1);
-      for (let i = 0; i < safeSessions && i < 10; i++) {
-        const cellRef = `${String.fromCharCode(66 + i)}${startRow}`;
-        ws.getCell(cellRef).value = "○";
-        ws.getCell(cellRef).font = { 
-          size: isSmall ? 9 : 11, 
-          bold: false 
-        };
-        ws.getCell(cellRef).alignment = { 
-          vertical: "middle", 
-          horizontal: "center" 
-        };
+    // Helper function to update cells safely
+    const updateCell = (cellAddress, value) => {
+      try {
+        const cell = worksheet.getCell(cellAddress);
+        cell.value = value;
+      } catch (error) {
+        console.error(`Error updating cell ${cellAddress}:`, error.message);
       }
     };
 
-    // Fill First Bill (Top section)
-    worksheet.getCell("B3").value = billNumber;
-    worksheet.getCell("E3").value = patient.idno;
-    worksheet.getCell("H3").value = lastVisit.date || new Date().toLocaleDateString('en-GB');
-    worksheet.getCell("B4").value = fullName;
-    worksheet.getCell("F4").value = patient.gender || "";
-    worksheet.getCell("H4").value = patient.age || "";
-    worksheet.getCell("B5").value = address;
-    worksheet.getCell("B6").value = patient.district || "";
-    worksheet.getCell("E6").value = patient.state || "";
-    worksheet.getCell("H6").value = patient.pin || "";
-    worksheet.getCell("B7").value = patient.phone || "";
-    worksheet.getCell("E7").value = numericFee;
-    worksheet.getCell("E8").value = numericDiscount;
-    worksheet.getCell("H8").value = approvalby || "";
-    worksheet.getCell("E9").value = totalAfterDiscount;
-    worksheet.getCell("E10").value = numericReceived;
-    worksheet.getCell("E11").value = balance;
+    // ==========================================
+    // FIRST COPY (Top Bill)
+    // ==========================================
+    
+    updateCell('B5', billNumber);
+    updateCell('E5', patient.idno || "");
+    updateCell('H5', date);
 
-    // Fill Second Bill (Middle section)
-    worksheet.getCell("B23").value = billNumber;
-    worksheet.getCell("E23").value = patient.idno;
-    worksheet.getCell("H23").value = lastVisit.date || new Date().toLocaleDateString('en-GB');
-    worksheet.getCell("B24").value = fullName;
-    worksheet.getCell("F24").value = patient.gender || "";
-    worksheet.getCell("H24").value = patient.age || "";
-    worksheet.getCell("B25").value = address;
-    worksheet.getCell("B26").value = patient.district || "";
-    worksheet.getCell("E26").value = patient.state || "";
-    worksheet.getCell("H26").value = patient.pin || "";
-    worksheet.getCell("B27").value = patient.phone || "";
-    worksheet.getCell("E27").value = numericFee;
-    worksheet.getCell("E28").value = numericDiscount;
-    worksheet.getCell("H28").value = approvalby || "";
-    worksheet.getCell("E29").value = totalAfterDiscount;
-    worksheet.getCell("E30").value = numericReceived;
-    worksheet.getCell("E31").value = balance;
+    updateCell('B6', fullName);
+    updateCell('F6', patient.gender || "");
+    updateCell('H6', patient.age || "");
 
-    // Fill Third Strip (Bottom section - smaller)
-    worksheet.getCell("B43").value = billNumber;
-    worksheet.getCell("E43").value = patient.idno;
-    worksheet.getCell("H43").value = lastVisit.date || new Date().toLocaleDateString('en-GB');
-    worksheet.getCell("B44").value = fullName;
-    worksheet.getCell("F44").value = patient.gender || "";
-    worksheet.getCell("H44").value = patient.age || "";
+    updateCell('B7', address);
+    updateCell('H7', patient.phone || "");
 
-    // Add therapy details
-    let firstBillTherapyRow = 13;
-    let secondBillTherapyRow = 33;
-    let thirdStripTherapyRow = 46;
+    updateCell('B8', totalFee);
+    updateCell('D8', `${discountPercentage}%`);
+    updateCell('H8', approvedBy);
 
+    updateCell('B9', totalAfterDiscount);
+    updateCell('D9', totalReceived);
+    updateCell('H9', balance);
+
+    // Therapy names and ovals - First Copy
+    const firstCopyTherapyStartRow = 10;
+    
     therapyList.forEach((therapy, index) => {
-      const safeSessions = safeNumber(therapy.sessions, 1);
+      const nameRow = firstCopyTherapyStartRow + (index * 2);
+      const ovalRow = nameRow + 1;
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
-      // First Bill
-      worksheet.getCell(`B${firstBillTherapyRow}`).value = therapy.name;
-      worksheet.getCell(`B${firstBillTherapyRow}`).font = { bold: true, size: 11 };
-      addSessionOvals(worksheet, firstBillTherapyRow + 1, safeSessions);
+      // Therapy name
+      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
+      const nameCell = worksheet.getCell(`B${nameRow}`);
+      nameCell.font = { bold: true, size: 11 };
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
-      // Second Bill
-      worksheet.getCell(`B${secondBillTherapyRow}`).value = therapy.name;
-      worksheet.getCell(`B${secondBillTherapyRow}`).font = { bold: true, size: 11 };
-      addSessionOvals(worksheet, secondBillTherapyRow + 1, safeSessions);
+      // Session ovals
+      let ovalSymbols = "";
+      for (let i = 0; i < sessions; i++) {
+        ovalSymbols += "⭕ ";
+      }
       
-      // Third Strip
-      worksheet.getCell(`B${thirdStripTherapyRow}`).value = therapy.name;
-      worksheet.getCell(`B${thirdStripTherapyRow}`).font = { bold: true, size: 10 };
-      addSessionOvals(worksheet, thirdStripTherapyRow + 1, safeSessions, true);
-      
-      // Move to next position
-      firstBillTherapyRow += 5;
-      secondBillTherapyRow += 5;
-      thirdStripTherapyRow += 5;
+      updateCell(`B${ovalRow}`, ovalSymbols);
+      const ovalCell = worksheet.getCell(`B${ovalRow}`);
+      ovalCell.font = { size: 14 };
+      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
 
-    // Generate and send file
-    const buffer = await workbook.xlsx.writeBuffer();
+    // ==========================================
+    // SECOND COPY (Middle Bill)
+    // ==========================================
+    
+    updateCell('B25', billNumber);
+    updateCell('E25', patient.idno || "");
+    updateCell('H25', date);
 
+    updateCell('B26', fullName);
+    updateCell('F26', patient.gender || "");
+    updateCell('H26', patient.age || "");
+
+    updateCell('B27', address);
+    updateCell('H27', patient.phone || "");
+
+    updateCell('B28', totalFee);
+    updateCell('D28', `${discountPercentage}%`);
+    updateCell('H28', approvedBy);
+
+    updateCell('B29', totalAfterDiscount);
+    updateCell('D29', totalReceived);
+    updateCell('H29', balance);
+
+    // Therapy names and ovals - Second Copy
+    const secondCopyTherapyStartRow = 30;
+    
+    therapyList.forEach((therapy, index) => {
+      const nameRow = secondCopyTherapyStartRow + (index * 2);
+      const ovalRow = nameRow + 1;
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
+      
+      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
+      const nameCell = worksheet.getCell(`B${nameRow}`);
+      nameCell.font = { bold: true, size: 11 };
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      
+      let ovalSymbols = "";
+      for (let i = 0; i < sessions; i++) {
+        ovalSymbols += "⭕ ";
+      }
+      
+      updateCell(`B${ovalRow}`, ovalSymbols);
+      const ovalCell = worksheet.getCell(`B${ovalRow}`);
+      ovalCell.font = { size: 14 };
+      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
+    });
+
+    // ==========================================
+    // STRIP SECTION (Bottom)
+    // ==========================================
+    
+    updateCell('B45', patient.idno || "");
+    updateCell('D45', billNumber);
+    updateCell('F45', fullName);
+    updateCell('H45', date);
+
+    // Therapy names and ovals - Strip
+    const stripTherapyStartRow = 46;
+    
+    therapyList.forEach((therapy, index) => {
+      const nameRow = stripTherapyStartRow + (index * 2);
+      const ovalRow = nameRow + 1;
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
+      
+      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
+      const nameCell = worksheet.getCell(`B${nameRow}`);
+      nameCell.font = { bold: true, size: 10 };
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      
+      let ovalSymbols = "";
+      for (let i = 0; i < sessions; i++) {
+        ovalSymbols += "⭕ ";
+      }
+      
+      updateCell(`B${ovalRow}`, ovalSymbols);
+      const ovalCell = worksheet.getCell(`B${ovalRow}`);
+      ovalCell.font = { size: 12 };
+      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
+    });
+
+    // Send file
+    const buffer = await workbook.xlsx.writeBuffer();
+    const cleanPatientName = fullName.replace(/[^a-zA-Z0-9]/g, '_');
+    const cleanBillNumber = billNumber.replace(/\//g, '_');
+    const therapyNames = therapyList.map(t => t.name).join('_');
+
+    const fileName = `${cleanBillNumber}_${cleanPatientName}_${therapyNames}_therapy_receipt.xlsx`;
+
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=therapy_receipt_${(patient.idno || "patient").replace(/[\\/]/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`
-    );
-
-    console.log("✅ Therapy receipt generated successfully");
     res.send(buffer);
-    
-  } catch (err) {
-    console.error("❌ Error exporting therapy cash receipt:", err);
-    console.error("Stack trace:", err.stack);
+
+  } catch (error) {
+    console.error("Error exporting therapy cash receipt:", error);
     res.status(500).json({ 
       message: "Internal Server Error", 
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
 
-// Helper function to add session ovals
-
-
+// Export this function in module.exports at the bottom of patientController.js
+// Don't forget to add this to module.exports at the bottom of patientController.js
 
 
 const exportPrakritiCashReceipt = async (req, res) => {
@@ -3818,6 +3724,7 @@ module.exports = {
   getLastPatient,
   exportLastPatientToExcel,
   exportPrescriptionFormToExcel,
+  exportTherapyCashReceipt,
   exportPrakritiCashReceipt,
   exportPatientMaster,
   updatePrakritiAmount,
@@ -3840,6 +3747,5 @@ module.exports = {
   exportSponsorReport,
   exportDiscountWiseReport,
   importBulkPatientData,
-  exportTherapyCashReceipt,
   updatePatientDetails
 };
