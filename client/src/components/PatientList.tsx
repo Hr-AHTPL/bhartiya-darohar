@@ -952,14 +952,15 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
     setShowReappointmentDialog(false);
   };
 
- const handleCashReceiptSubmit = async () => {
+  const handleCashReceiptSubmit = async () => {
   if (!selectedPatient) return;
 
   const numericFee = parseFloat(feeAmount);
-  const discount = parseFloat(discountPercentage) || 0;
+  const discount = parseFloat(discountPercentage);
   const approvalby = approvedBy.trim();
   const numericReceived = parseFloat(receivedAmount);
-  const finalPurpose = receiptPurpose === "Others" ? otherPurpose : receiptPurpose;
+  const finalPurpose =
+    receiptPurpose === "Others" ? otherPurpose : receiptPurpose;
 
   if (!numericFee || numericFee <= 0) {
     alert("Please enter a valid fee amount");
@@ -983,78 +984,58 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
   }
 
   try {
-    let endpoint;
-    let params: any = {
-      feeAmount: numericFee,
-      receivedAmount: numericReceived,
-      discount: discount,
-      approvalby: approvalby,
-    };
+    // Prepare therapy names for display
+    const therapyNames = addedTherapies.map(t => 
+      `${t.name} (${t.sessions} session${t.sessions > 1 ? 's' : ''})`
+    ).join(', ');
 
-    // ⭐ Choose the correct endpoint based on purpose
-    if (finalPurpose === "Therapy" && addedTherapies.length > 0) {
-      // Use NEW therapy endpoint
-      endpoint = `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`;
-      
-      // Format therapies for new endpoint (just name and sessions)
-      params.therapies = JSON.stringify(
-        addedTherapies.map(t => ({
-          name: t.name,
-          sessions: t.sessions
-        }))
-      );
-      
-      console.log("🎯 Using NEW therapy endpoint:", endpoint);
-      console.log("📦 Therapy data:", params.therapies);
-    } else {
-      // Use OLD endpoint for Consultation, Prakriti, Others
-      endpoint = `${API_BASE_URL}/api/website/enquiry/prakriti-registration/${selectedPatient.id}`;
-      params.purpose = finalPurpose;
-      
-      console.log("📝 Using OLD receipt endpoint:", endpoint);
-    }
-
-    const response = await axios.get(endpoint, {
-      responseType: "blob",
-      params: params,
-    });
+    const response = await axios.get(
+      `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`,
+      {
+        responseType: "blob",
+        params: {
+          feeAmount: numericFee,
+          receivedAmount: numericReceived,
+          purpose: finalPurpose,
+          ...(finalPurpose === "Therapy" && { 
+            therapyName: therapyNames,
+            therapies: JSON.stringify(addedTherapies) // Send full therapy array
+          }),
+          discount: discount,
+          approvalby: approvalby,
+        },
+      }
+    );
 
     const blob = new Blob([response.data], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      type: "application/pdf",
     });
     const url = window.URL.createObjectURL(blob);
 
     const a = document.createElement("a");
     a.href = url;
-    
-    // Better filename
-    const filename = finalPurpose === "Therapy" && addedTherapies.length > 0
-      ? `therapy_receipt_${selectedPatient.name.replace(/\s+/g, "_")}.xlsx`
-      : `cash_receipt_${selectedPatient.name.replace(/\s+/g, "_")}_${finalPurpose.replace(/\s+/g, "_")}.xlsx`;
-    
-    a.download = filename;
+    a.download = `cash_receipt_${selectedPatient.name}_${finalPurpose.replace(
+      /\s+/g,
+      "_"
+    )}.xlsx`;
     a.click();
 
     window.URL.revokeObjectURL(url);
+    console.log(
+      `Cash receipt generated for ${selectedPatient.name} - Purpose: ${finalPurpose}, Fee: ₹${numericFee}, Received: ₹${numericReceived}`
+    );
     
-    console.log(`✅ Receipt generated for ${selectedPatient.name}`);
-    
-    // Reset form
     setOtherPurpose("");
     setFeeAmount("");
     setReceivedAmount("");
     setReceiptPurpose("");
     setTherapyName("");
-    setAddedTherapies([]);
-    setCurrentTherapySessions("1");
-    setDiscountPercentage("");
-    setApprovedBy("");
+    setAddedTherapies([]); // ADD THIS
+    setCurrentTherapySessions("1"); // ADD THIS
     setShowCashReceiptDialog(false);
-    
-    alert("Receipt generated successfully!");
   } catch (error) {
-    console.error("❌ Error generating cash receipt:", error);
-    alert("Failed to generate cash receipt. Please try again.");
+    console.error("Error generating cash receipt:", error);
+    alert("Failed to generate cash receipt.");
   }
 };
 
