@@ -279,24 +279,24 @@ const exportTherapyCashReceipt = async (req, res) => {
     // SECOND COPY (Middle Bill)
     // ==========================================
     
-    updateCell('B25', billNumber);
-    updateCell('E25', patient.idno || "");
-    updateCell('H25', date);
+    updateCell('B23', billNumber);
+    updateCell('E23', patient.idno || "");
+    updateCell('H23', date);
 
-    updateCell('B26', fullName);
-    updateCell('F26', patient.gender || "");
-    updateCell('H26', patient.age || "");
+    updateCell('B24', fullName);
+    updateCell('F24', patient.gender || "");
+    updateCell('H24', patient.age || "");
 
-    updateCell('B27', address);
-    updateCell('H27', patient.phone || "");
+    updateCell('B25', address);
+    updateCell('H25', patient.phone || "");
 
-    updateCell('B28', totalFee);
-    updateCell('D28', `${discountPercentage}%`);
-    updateCell('H28', approvedBy);
+    updateCell('B26', totalFee);
+    updateCell('D26', `${discountPercentage}%`);
+    updateCell('H26', approvedBy);
 
-    updateCell('B29', totalAfterDiscount);
-    updateCell('D29', totalReceived);
-    updateCell('H29', balance);
+    updateCell('B27', totalAfterDiscount);
+    updateCell('D27', totalReceived);
+    updateCell('H27', balance);
 
     // Therapy names and ovals - Second Copy
     const secondCopyTherapyStartRow = 30;
@@ -326,10 +326,10 @@ const exportTherapyCashReceipt = async (req, res) => {
     // STRIP SECTION (Bottom)
     // ==========================================
     
-    updateCell('B45', patient.idno || "");
-    updateCell('D45', billNumber);
-    updateCell('F45', fullName);
-    updateCell('H45', date);
+    updateCell('B37', patient.idno || "");
+    updateCell('B38', billNumber);
+    updateCell('E37', fullName);
+    updateCell('H37', date);
 
     // Therapy names and ovals - Strip
     const stripTherapyStartRow = 46;
