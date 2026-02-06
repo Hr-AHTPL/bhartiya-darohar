@@ -105,21 +105,20 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 // CORRECTED VERSION - Add this to patientController.js
 // This function fetches therapies from the database, not from query parameters
 
-// CORRECT VERSION - Replace the exportTherapyCashReceipt function in patientController.js
-// Based on actual template: 7 ovals per row (columns D, E, F, G, H and partially into I, J)
-// 3 sections: Main Receipt, Strip, Patient Copy
+// SIMPLIFIED CORRECT VERSION - Based on actual output analysis
+// This version focuses on populating data correctly and ensuring ovals appear
 
 const exportTherapyCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
 
-    // Fetch patient details
+    // Fetch patient
     const patient = await patientModel.findById(patientId);
     if (!patient) {
       return res.status(404).json({ message: "Patient not found" });
     }
 
-    // Fetch last visit with therapies
+    // Fetch last visit
     const lastVisit = await visitModel
       .findOne({ patientId: patient._id })
       .sort({ createdAt: -1 });
@@ -128,16 +127,11 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(404).json({ message: "No last visit found" });
     }
 
-    // Get therapies from database
     const therapies = lastVisit.therapies || [];
-    
     if (therapies.length === 0) {
-      return res.status(400).json({ 
-        message: "No therapies found for this patient's last visit" 
-      });
+      return res.status(400).json({ message: "No therapies found" });
     }
 
-    // Limit to first 3 therapies for the receipt
     const therapyList = therapies.slice(0, 3);
 
     // Generate Bill Number
@@ -148,7 +142,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
 
-    // Calculate totals
+    // Calculate financial data
     let totalFee = 0;
     let totalReceived = 0;
     let totalDiscount = 0;
@@ -157,256 +151,220 @@ const exportTherapyCashReceipt = async (req, res) => {
       const fee = Number(therapy.amount || 0);
       totalFee += fee;
       
-      // Find received amount for this therapy
-      const therapyPayment = lastVisit.therapyWithAmount?.find(
-        t => t.name === therapy.name
-      );
+      const therapyPayment = lastVisit.therapyWithAmount?.find(t => t.name === therapy.name);
       if (therapyPayment) {
         totalReceived += Number(therapyPayment.receivedAmount || 0);
       }
 
-      // Find discount for this therapy
-      const therapyDiscount = lastVisit.discounts?.therapies?.find(
-        t => t.name === therapy.name
-      );
+      const therapyDiscount = lastVisit.discounts?.therapies?.find(t => t.name === therapy.name);
       if (therapyDiscount) {
-        const discountAmount = (fee * Number(therapyDiscount.percentage || 0)) / 100;
-        totalDiscount += discountAmount;
+        totalDiscount += (fee * Number(therapyDiscount.percentage || 0)) / 100;
       }
     });
 
     const totalAfterDiscount = totalFee - totalDiscount;
     const balance = totalAfterDiscount - totalReceived;
-    const discountPercentage = totalFee > 0 ? ((totalDiscount / totalFee) * 100).toFixed(2) : 0;
+    const discountPercentage = totalFee > 0 ? ((totalDiscount / totalFee) * 100).toFixed(2) + '%' : '0%';
 
-    // Get approved by names
-    const approvedByList = [];
+    // Get approved by
+    const approvedBySet = new Set();
     therapyList.forEach(therapy => {
-      const therapyDiscount = lastVisit.discounts?.therapies?.find(
-        t => t.name === therapy.name
-      );
+      const therapyDiscount = lastVisit.discounts?.therapies?.find(t => t.name === therapy.name);
       if (therapyDiscount?.approvedBy) {
-        approvedByList.push(therapyDiscount.approvedBy);
+        approvedBySet.add(therapyDiscount.approvedBy);
       }
     });
-    const approvedBy = [...new Set(approvedByList)].join(", ") || "";
+    const approvedBy = Array.from(approvedBySet).join(", ") || "";
 
-    // Load Excel Template
-    const templatePath = path.join(
-      __dirname,
-      "../../assets/receiptGenerationTherapy.xlsx"
-    );
+    // Load template
+    const templatePath = path.join(__dirname, "../../assets/receiptGenerationTherapy.xlsx");
     
     if (!fs.existsSync(templatePath)) {
-      return res.status(404).json({ 
-        message: "Template file not found",
-        path: templatePath
-      });
+      return res.status(404).json({ message: "Template not found", path: templatePath });
     }
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(templatePath);
-    const worksheet = workbook.getWorksheet("Cash Receipt") || workbook.getWorksheet("Sheet1");
+    const worksheet = workbook.worksheets[0]; // Get first sheet
 
     if (!worksheet) {
-      return res.status(400).json({ 
-        message: "Worksheet 'Cash Receipt' or 'Sheet1' not found in template" 
-      });
+      return res.status(400).json({ message: "Worksheet not found" });
     }
 
     // Prepare data
     const date = lastVisit.date || new Date().toLocaleDateString('en-GB');
     const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
     const address = `${patient.houseno || ""}, ${patient.city || ""}`.trim();
+    const bdnCode = `BD/N/C50/${patient.idno || "2706"}`;
 
-    // Helper function to update cells safely
-    const updateCell = (cellAddress, value) => {
+    // Safe cell update function
+    const setCell = (address, value) => {
       try {
-        const cell = worksheet.getCell(cellAddress);
+        const cell = worksheet.getCell(address);
         cell.value = value;
-      } catch (error) {
-        console.error(`Error updating cell ${cellAddress}:`, error.message);
+        return true;
+      } catch (e) {
+        console.error(`Failed to set cell ${address}:`, e.message);
+        return false;
       }
     };
 
-    // Helper function to add ovals for sessions
-    // Ovals span columns D, E, F, G, H, I, J (7 ovals per row)
-    const addOvalsForTherapy = (startRow, therapyIndex, sessions) => {
-      const ovalColumns = ['D', 'E', 'F', 'G', 'H', 'I', 'J'];
-      const maxOvalsPerRow = 7;
-      const row = startRow + therapyIndex; // Each therapy gets one row
-      
-      // Limit sessions to 7 max per therapy
-      const actualSessions = Math.min(sessions, maxOvalsPerRow);
-      
-      for (let i = 0; i < actualSessions; i++) {
-        const cellRef = `${ovalColumns[i]}${row}`;
-        const cell = worksheet.getCell(cellRef);
-        
-        // Add oval border
-        cell.border = {
-          top: { style: 'thin', color: { argb: 'FF000000' } },
-          left: { style: 'thin', color: { argb: 'FF000000' } },
-          bottom: { style: 'thin', color: { argb: 'FF000000' } },
-          right: { style: 'thin', color: { argb: 'FF000000' } }
-        };
-        
-        // Center alignment
-        cell.alignment = { 
-          vertical: 'middle', 
-          horizontal: 'center' 
-        };
-      }
-    };
-
-    // Helper function to add therapy name in merged cells A:B
-    const addTherapyName = (row, therapyName) => {
+    // Function to draw oval borders
+    const drawOval = (address) => {
       try {
-        // Merge cells A and B for therapy name
-        worksheet.mergeCells(`A${row}:B${row}`);
-        const cell = worksheet.getCell(`A${row}`);
-        cell.value = therapyName;
-        cell.alignment = { 
-          vertical: 'middle', 
-          horizontal: 'left' 
+        const cell = worksheet.getCell(address);
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
         };
-      } catch (error) {
-        console.error(`Error adding therapy name at row ${row}:`, error.message);
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        
+        // Set minimum row height
+        const row = worksheet.getRow(cell.row);
+        if (!row.height || row.height < 18) {
+          row.height = 18;
+        }
+        return true;
+      } catch (e) {
+        console.error(`Failed to draw oval at ${address}:`, e.message);
+        return false;
       }
     };
 
-    // ==========================================
-    // SECTION 1: MAIN RECEIPT (Rows 5-16)
-    // ==========================================
+    // ========================================
+    // FIRST COPY (Office Copy) - Rows 5-20
+    // ========================================
     
-    // Row 5: Bill No., ID No., Date
-    updateCell('A5', 'Bill No.');
-    updateCell('B5', billNumber);
-    updateCell('C5', 'ID No.');
-    updateCell('D5', patient.idno || "");
-    updateCell('G5', 'Date');
-    updateCell('H5', date);
-
-    // Row 6: Name, Sex, Age
-    updateCell('A6', 'Name');
-    updateCell('B6', fullName);
-    updateCell('E6', 'Sex');
-    updateCell('F6', patient.gender || "");
-    updateCell('G6', 'Age');
-    updateCell('H6', patient.age || "");
-
-    // Row 7: Address, Mobile
-    updateCell('A7', 'Address');
-    updateCell('B7', address);
-    updateCell('G7', 'Mobile');
-    updateCell('H7', patient.phone || "");
-
-    // Row 8: Fee, Discount (%), Approved by
-    updateCell('A8', 'Fee');
-    updateCell('B8', totalFee);
-    updateCell('C8', 'Discount (%)');
-    updateCell('D8', `${discountPercentage}%`);
-    updateCell('G8', 'Approved by');
-    updateCell('H8', approvedBy);
-
-    // Row 9: Total, Received Amount, Balance
-    updateCell('A9', 'Total');
-    updateCell('B9', totalAfterDiscount);
-    updateCell('C9', 'Received Amount');
-    updateCell('D9', totalReceived);
-    updateCell('G9', 'Balance');
-    updateCell('H9', balance);
-
-    // Rows 11-13: Add therapy names and ovals for main receipt
-    if (therapyList.length > 0) {
-      addTherapyName(11, therapyList[0].name);
-      addOvalsForTherapy(11, 0, parseInt(therapyList[0].sessions) || 0);
-    }
+    setCell('B5', billNumber);
+    setCell('C5', bdnCode);
+    setCell('H5', date);
     
-    if (therapyList.length > 1) {
-      addTherapyName(12, therapyList[1].name);
-      addOvalsForTherapy(11, 1, parseInt(therapyList[1].sessions) || 0);
-    }
+    setCell('B6', fullName);
+    setCell('E6', patient.gender || 'Male');
+    setCell('H6', patient.age || '18');
     
-    if (therapyList.length > 2) {
-      addTherapyName(13, therapyList[2].name);
-      addOvalsForTherapy(11, 2, parseInt(therapyList[2].sessions) || 0);
-    }
+    setCell('B7', address);
+    setCell('H7', patient.phone || '');
+    
+    setCell('B8', totalFee);
+    setCell('C8', discountPercentage);
+    setCell('H8', approvedBy);
+    
+    setCell('B9', totalAfterDiscount);
+    setCell('C9', 'Received Amount'); // Label
+    setCell('D9', totalReceived);
+    setCell('H9', balance);
 
-    // ==========================================
-    // SECTION 2: STRIP (Rows 29-34)
-    // ==========================================
+    // Draw ovals for therapies - Main copy
+    // Oval columns: C, D, E, F, G, H, I
+    const ovalCols = ['C', 'D', 'E', 'F', 'G', 'H', 'I'];
     
-    // Add therapy names and ovals for strip
-    if (therapyList.length > 0) {
-      addTherapyName(29, therapyList[0].name);
-      addOvalsForTherapy(29, 0, parseInt(therapyList[0].sessions) || 0);
-    }
-    
-    if (therapyList.length > 1) {
-      addTherapyName(32, therapyList[1].name);
-      addOvalsForTherapy(29, 3, parseInt(therapyList[1].sessions) || 0);
-    }
-    
-    if (therapyList.length > 2) {
-      addTherapyName(33, therapyList[2].name);
-      addOvalsForTherapy(29, 4, parseInt(therapyList[2].sessions) || 0);
-    }
+    therapyList.forEach((therapy, idx) => {
+      const baseRow = 11 + (idx * 2); // Rows 11, 13, 15 for 3 therapies
+      const sessions = Math.min(parseInt(therapy.sessions) || 0, 7);
+      
+      // Set therapy name (merge A:B)
+      try {
+        worksheet.mergeCells(`A${baseRow}:B${baseRow}`);
+        setCell(`A${baseRow}`, therapy.name);
+      } catch (e) {
+        // If already merged, just set value
+        setCell(`A${baseRow}`, therapy.name);
+      }
+      
+      // Draw ovals
+      for (let i = 0; i < sessions; i++) {
+        drawOval(`${ovalCols[i]}${baseRow}`);
+      }
+    });
 
-    // ==========================================
-    // SECTION 3: PATIENT COPY (Rows 37-44)
-    // ==========================================
+    // ========================================
+    // SECOND COPY (Middle Copy) - Rows 22-38
+    // ========================================
     
-    // Row 37: ID No., Name, Date
-    updateCell('A37', 'ID No.');
-    updateCell('B37', patient.idno || "");
-    updateCell('D37', 'Name');
-    updateCell('E37', fullName);
-    updateCell('H37', `Date ${date}`);
-
-    // Row 38: Bill No.
-    updateCell('A38', 'Bill No.');
-    updateCell('B38', billNumber);
-
-    // Rows 39-44: Add therapy names and ovals for patient copy
-    if (therapyList.length > 0) {
-      addTherapyName(39, therapyList[0].name);
-      addOvalsForTherapy(39, 0, parseInt(therapyList[0].sessions) || 0);
-    }
+    const copy2Start = 22;
     
-    if (therapyList.length > 1) {
-      addTherapyName(42, therapyList[1].name);
-      addOvalsForTherapy(39, 3, parseInt(therapyList[1].sessions) || 0);
-    }
+    setCell(`B${copy2Start}`, billNumber);
+    setCell(`D${copy2Start}`, patient.idno || '');
+    setCell(`H${copy2Start}`, date);
     
-    if (therapyList.length > 2) {
-      addTherapyName(43, therapyList[2].name);
-      addOvalsForTherapy(39, 4, parseInt(therapyList[2].sessions) || 0);
-    }
+    setCell(`B${copy2Start + 1}`, fullName);
+    setCell(`E${copy2Start + 1}`, patient.gender || '');
+    setCell(`H${copy2Start + 1}`, patient.age || '');
+    
+    setCell(`B${copy2Start + 2}`, address);
+    setCell(`H${copy2Start + 2}`, patient.phone || '');
+    
+    setCell(`B${copy2Start + 3}`, totalFee);
+    setCell(`D${copy2Start + 3}`, discountPercentage);
+    setCell(`H${copy2Start + 3}`, approvedBy);
+    
+    setCell(`B${copy2Start + 4}`, totalAfterDiscount);
+    setCell(`D${copy2Start + 4}`, totalReceived);
+    setCell(`H${copy2Start + 4}`, balance);
 
-    // ==========================================
-    // GENERATE AND SEND FILE
-    // ==========================================
+    // Draw ovals for second copy
+    therapyList.forEach((therapy, idx) => {
+      const baseRow = copy2Start + 6 + (idx * 2);
+      const sessions = Math.min(parseInt(therapy.sessions) || 0, 7);
+      
+      try {
+        worksheet.mergeCells(`A${baseRow}:B${baseRow}`);
+        setCell(`A${baseRow}`, therapy.name);
+      } catch (e) {
+        setCell(`A${baseRow}`, therapy.name);
+      }
+      
+      for (let i = 0; i < sessions; i++) {
+        drawOval(`${ovalCols[i]}${baseRow}`);
+      }
+    });
+
+    // ========================================
+    // THIRD COPY (Patient Copy) - Rows 40+
+    // ========================================
+    
+    const copy3Start = 40;
+    
+    setCell(`B${copy3Start}`, bdnCode);
+    setCell(`E${copy3Start}`, fullName);
+    setCell(`H${copy3Start}`, `Date ${date}`);
+    
+    setCell(`B${copy3Start + 1}`, billNumber);
+
+    // Draw ovals for patient copy
+    therapyList.forEach((therapy, idx) => {
+      const baseRow = copy3Start + 3 + (idx * 2);
+      const sessions = Math.min(parseInt(therapy.sessions) || 0, 7);
+      
+      try {
+        worksheet.mergeCells(`A${baseRow}:B${baseRow}`);
+        setCell(`A${baseRow}`, therapy.name);
+      } catch (e) {
+        setCell(`A${baseRow}`, therapy.name);
+      }
+      
+      for (let i = 0; i < sessions; i++) {
+        drawOval(`${ovalCols[i]}${baseRow}`);
+      }
+    });
+
+    // Generate file
     const buffer = await workbook.xlsx.writeBuffer();
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=therapy_receipt_${(patient.idno || "patient").replace(/[\\/]/g, "_")}_${new Date().toISOString().split('T')[0]}.xlsx`
-    );
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=therapy_receipt_${patient.idno || 'patient'}_${new Date().toISOString().split('T')[0]}.xlsx`);
 
     res.send(buffer);
+
   } catch (err) {
-    console.error("Error exporting therapy cash receipt:", err);
-    res.status(500).json({ 
-      message: "Internal Server Error", 
-      error: err.message 
-    });
+    console.error("Error exporting therapy receipt:", err);
+    res.status(500).json({ message: "Internal Server Error", error: err.message });
   }
 };
+
 
 // Export this function in module.exports at the bottom of patientController.js
 // Don't forget to add this to module.exports at the bottom of patientController.js
