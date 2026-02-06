@@ -133,8 +133,8 @@ const exportTherapyCashReceipt = async (req, res) => {
       });
     }
 
-    // Limit to first 3 therapies for the receipt
-    const therapyList = therapies.slice(0, 3);
+    // Use all therapies (not limiting to 3)
+    const therapyList = therapies;
 
     // Generate Bill Number
     const billCounter = await counterModel.findOneAndUpdate(
@@ -226,10 +226,57 @@ const exportTherapyCashReceipt = async (req, res) => {
       }
     };
 
+    // Helper function to create ovals in cells
+    const createOvalInCell = (cellAddress) => {
+      try {
+        const cell = worksheet.getCell(cellAddress);
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        // You can add more styling here if needed
+      } catch (error) {
+        console.error(`Error creating oval in cell ${cellAddress}:`, error.message);
+      }
+    };
+
+    // Helper function to add therapy rows dynamically with gaps
+    // Each therapy takes 2 rows: one with ovals, one blank gap
+    const addTherapyRows = (startRow, therapyList) => {
+      // Maximum 3 therapies
+      const therapiesToShow = therapyList.slice(0, 3);
+      
+      // Define the rows for therapies: row, gap, row, gap, row
+      const therapyRows = [startRow, startRow + 2, startRow + 4];
+      
+      therapiesToShow.forEach((therapy, index) => {
+        const currentRow = therapyRows[index];
+        
+        // Find therapy details
+        const therapyPayment = lastVisit.therapyWithAmount?.find(
+          t => t.name === therapy.name
+        );
+        const sessions = therapyPayment?.sessions || therapy.sessions || 1;
+        
+        // Column B: Therapy Name with Sessions (before the ovals start)
+        updateCell(`B${currentRow}`, `${therapy.name} (${sessions})`);
+        
+        // Columns C-I: Create 7 ovals (one for each day of the week)
+        const ovalColumns = ['C', 'D', 'E', 'F', 'G', 'H', 'I'];
+        ovalColumns.forEach(col => {
+          createOvalInCell(`${col}${currentRow}`);
+        });
+      });
+    };
+
     // ==========================================
-    // FIRST COPY (Top Bill)
+    // FIRST COPY (Top Bill) - Rows 1-17
     // ==========================================
     
+    // Header info
     updateCell('B5', billNumber);
     updateCell('E5', patient.idno || "");
     updateCell('H5', date);
@@ -249,36 +296,14 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('D9', totalReceived);
     updateCell('H9', balance);
 
-    // Therapy names and ovals - First Copy
-    const firstCopyTherapyStartRow = 10;
-    
-    therapyList.forEach((therapy, index) => {
-      const nameRow = firstCopyTherapyStartRow + (index * 2);
-      const ovalRow = nameRow + 1;
-      const sessions = Math.min(Number(therapy.sessions || 1), 7);
-      
-      // Therapy name
-      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
-      const nameCell = worksheet.getCell(`B${nameRow}`);
-      nameCell.font = { bold: true, size: 11 };
-      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-      
-      // Session ovals
-      let ovalSymbols = "";
-      for (let i = 0; i < sessions; i++) {
-        ovalSymbols += "⭕ ";
-      }
-      
-      updateCell(`B${ovalRow}`, ovalSymbols);
-      const ovalCell = worksheet.getCell(`B${ovalRow}`);
-      ovalCell.font = { size: 14 };
-      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
-    });
+    // Add therapy rows starting from row 11
+    addTherapyRows(11, therapyList);
 
     // ==========================================
-    // SECOND COPY (Middle Bill)
+    // SECOND COPY (Bottom Bill) - Rows 19-35
     // ==========================================
     
+    // Header info
     updateCell('B23', billNumber);
     updateCell('E23', patient.idno || "");
     updateCell('H23', date);
@@ -298,88 +323,58 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('D27', totalReceived);
     updateCell('H27', balance);
 
-    // Therapy names and ovals - Second Copy
-    const secondCopyTherapyStartRow = 30;
+    // Add therapy rows starting from row 29
+    addTherapyRows(29, therapyList);
+
+    // ==========================================
+    // THIRD SECTION (Bottom tracking section) - Rows 37+
+    // ==========================================
     
-    therapyList.forEach((therapy, index) => {
-      const nameRow = secondCopyTherapyStartRow + (index * 2);
-      const ovalRow = nameRow + 1;
-      const sessions = Math.min(Number(therapy.sessions || 1), 7);
+    // This section appears to be for tracking purposes
+    // Add therapy info in a simpler format with gaps
+    const therapiesToShow = therapyList.slice(0, 3);
+    const trackingRows = [40, 42, 44]; // With gaps: 40, blank 41, 42, blank 43, 44
+    
+    therapiesToShow.forEach((therapy, index) => {
+      const currentRow = trackingRows[index];
       
-      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
-      const nameCell = worksheet.getCell(`B${nameRow}`);
-      nameCell.font = { bold: true, size: 11 };
-      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      updateCell(`B${currentRow}`, patient.idno || "");
+      updateCell(`D${currentRow}`, fullName);
+      updateCell(`G${currentRow}`, date);
       
-      let ovalSymbols = "";
-      for (let i = 0; i < sessions; i++) {
-        ovalSymbols += "⭕ ";
-      }
-      
-      updateCell(`B${ovalRow}`, ovalSymbols);
-      const ovalCell = worksheet.getCell(`B${ovalRow}`);
-      ovalCell.font = { size: 14 };
-      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      // Create ovals for tracking (columns C-I)
+      const trackingOvalColumns = ['C', 'D', 'E', 'F', 'G', 'H', 'I'];
+      trackingOvalColumns.forEach(col => {
+        createOvalInCell(`${col}${currentRow}`);
+      });
     });
 
     // ==========================================
-    // STRIP SECTION (Bottom)
+    // Generate and Send File
     // ==========================================
-    
-    updateCell('B37', patient.idno || "");
-    updateCell('B38', billNumber);
-    updateCell('E37', fullName);
-    updateCell('H37', date);
-
-    // Therapy names and ovals - Strip
-    const stripTherapyStartRow = 46;
-    
-    therapyList.forEach((therapy, index) => {
-      const nameRow = stripTherapyStartRow + (index * 2);
-      const ovalRow = nameRow + 1;
-      const sessions = Math.min(Number(therapy.sessions || 1), 7);
-      
-      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
-      const nameCell = worksheet.getCell(`B${nameRow}`);
-      nameCell.font = { bold: true, size: 10 };
-      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-      
-      let ovalSymbols = "";
-      for (let i = 0; i < sessions; i++) {
-        ovalSymbols += "⭕ ";
-      }
-      
-      updateCell(`B${ovalRow}`, ovalSymbols);
-      const ovalCell = worksheet.getCell(`B${ovalRow}`);
-      ovalCell.font = { size: 12 };
-      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
-    });
-
-    // Send file
     const buffer = await workbook.xlsx.writeBuffer();
-    const cleanPatientName = fullName.replace(/[^a-zA-Z0-9]/g, '_');
-    const cleanBillNumber = billNumber.replace(/\//g, '_');
-    const therapyNames = therapyList.map(t => t.name).join('_');
 
-    const fileName = `${cleanBillNumber}_${cleanPatientName}_${therapyNames}_therapy_receipt.xlsx`;
-
-    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    res.send(buffer);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=therapy_receipt_${(patient.idno || "patient").replace(
+        /[\\/]/g,
+        "_"
+      )}_${new Date().toISOString().split('T')[0]}.xlsx`
+    );
 
-  } catch (error) {
-    console.error("Error exporting therapy cash receipt:", error);
+    res.send(buffer);
+  } catch (err) {
+    console.error("Error exporting therapy cash receipt:", err);
     res.status(500).json({ 
       message: "Internal Server Error", 
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: err.message 
     });
   }
 };
-
 // Export this function in module.exports at the bottom of patientController.js
 // Don't forget to add this to module.exports at the bottom of patientController.js
 
