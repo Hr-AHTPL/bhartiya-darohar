@@ -105,20 +105,17 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 // CORRECTED VERSION - Add this to patientController.js
 // This function fetches therapies from the database, not from query parameters
 
-// SIMPLIFIED CORRECT VERSION - Based on actual output analysis
-// This version focuses on populating data correctly and ensuring ovals appear
-
 const exportTherapyCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
 
-    // Fetch patient
+    // Fetch patient details
     const patient = await patientModel.findById(patientId);
     if (!patient) {
       return res.status(404).json({ message: "Patient not found" });
     }
 
-    // Fetch last visit
+    // Fetch last visit with therapies
     const lastVisit = await visitModel
       .findOne({ patientId: patient._id })
       .sort({ createdAt: -1 });
@@ -127,11 +124,16 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(404).json({ message: "No last visit found" });
     }
 
+    // Get therapies from database (already stored in visit)
     const therapies = lastVisit.therapies || [];
+    
     if (therapies.length === 0) {
-      return res.status(400).json({ message: "No therapies found" });
+      return res.status(400).json({ 
+        message: "No therapies found for this patient's last visit" 
+      });
     }
 
+    // Limit to first 3 therapies for the receipt
     const therapyList = therapies.slice(0, 3);
 
     // Generate Bill Number
@@ -142,229 +144,241 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
 
-    // Calculate financial data
+    // Calculate totals from therapyWithAmount (amounts already paid for therapies)
     let totalFee = 0;
     let totalReceived = 0;
     let totalDiscount = 0;
 
+    // Calculate from the therapies prescribed
     therapyList.forEach(therapy => {
       const fee = Number(therapy.amount || 0);
       totalFee += fee;
       
-      const therapyPayment = lastVisit.therapyWithAmount?.find(t => t.name === therapy.name);
+      // Find received amount for this therapy
+      const therapyPayment = lastVisit.therapyWithAmount?.find(
+        t => t.name === therapy.name
+      );
       if (therapyPayment) {
         totalReceived += Number(therapyPayment.receivedAmount || 0);
       }
 
-      const therapyDiscount = lastVisit.discounts?.therapies?.find(t => t.name === therapy.name);
+      // Find discount for this therapy
+      const therapyDiscount = lastVisit.discounts?.therapies?.find(
+        t => t.name === therapy.name
+      );
       if (therapyDiscount) {
-        totalDiscount += (fee * Number(therapyDiscount.percentage || 0)) / 100;
+        const discountAmount = (fee * Number(therapyDiscount.percentage || 0)) / 100;
+        totalDiscount += discountAmount;
       }
     });
 
     const totalAfterDiscount = totalFee - totalDiscount;
     const balance = totalAfterDiscount - totalReceived;
-    const discountPercentage = totalFee > 0 ? ((totalDiscount / totalFee) * 100).toFixed(2) + '%' : '0%';
+    const discountPercentage = totalFee > 0 ? ((totalDiscount / totalFee) * 100).toFixed(2) : 0;
 
-    // Get approved by
-    const approvedBySet = new Set();
+    // Get approved by names
+    const approvedByList = [];
     therapyList.forEach(therapy => {
-      const therapyDiscount = lastVisit.discounts?.therapies?.find(t => t.name === therapy.name);
+      const therapyDiscount = lastVisit.discounts?.therapies?.find(
+        t => t.name === therapy.name
+      );
       if (therapyDiscount?.approvedBy) {
-        approvedBySet.add(therapyDiscount.approvedBy);
+        approvedByList.push(therapyDiscount.approvedBy);
       }
     });
-    const approvedBy = Array.from(approvedBySet).join(", ") || "";
+    const approvedBy = [...new Set(approvedByList)].join(", ") || "";
 
-    // Load template
-    const templatePath = path.join(__dirname, "../../assets/receiptGenerationTherapy.xlsx");
+    // Load Excel Template
+    const templatePath = path.join(
+      __dirname,
+      "../../assets/receiptGenerationTherapy.xlsx"
+    );
     
     if (!fs.existsSync(templatePath)) {
-      return res.status(404).json({ message: "Template not found", path: templatePath });
+      return res.status(404).json({ 
+        message: "Template file not found",
+        path: templatePath
+      });
     }
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(templatePath);
-    const worksheet = workbook.worksheets[0]; // Get first sheet
+    const worksheet = workbook.getWorksheet("Cash Receipt") || workbook.getWorksheet("Sheet1");
 
     if (!worksheet) {
-      return res.status(400).json({ message: "Worksheet not found" });
+      return res.status(400).json({ 
+        message: "Worksheet 'Cash Receipt' or 'Sheet1' not found in template" 
+      });
     }
 
     // Prepare data
     const date = lastVisit.date || new Date().toLocaleDateString('en-GB');
     const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
     const address = `${patient.houseno || ""}, ${patient.city || ""}`.trim();
-    const bdnCode = `BD/N/C50/${patient.idno || "2706"}`;
 
-    // Safe cell update function
-    const setCell = (address, value) => {
+    // Helper function to update cells safely
+    const updateCell = (cellAddress, value) => {
       try {
-        const cell = worksheet.getCell(address);
+        const cell = worksheet.getCell(cellAddress);
         cell.value = value;
-        return true;
-      } catch (e) {
-        console.error(`Failed to set cell ${address}:`, e.message);
-        return false;
+      } catch (error) {
+        console.error(`Error updating cell ${cellAddress}:`, error.message);
       }
     };
 
-    // Function to draw oval borders
-    const drawOval = (address) => {
-      try {
-        const cell = worksheet.getCell(address);
-        cell.border = {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        };
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        
-        // Set minimum row height
-        const row = worksheet.getRow(cell.row);
-        if (!row.height || row.height < 18) {
-          row.height = 18;
-        }
-        return true;
-      } catch (e) {
-        console.error(`Failed to draw oval at ${address}:`, e.message);
-        return false;
-      }
-    };
+    // ==========================================
+    // FIRST COPY (Top Bill)
+    // ==========================================
+    
+    updateCell('B5', billNumber);
+    updateCell('E5', patient.idno || "");
+    updateCell('H5', date);
 
-    // ========================================
-    // FIRST COPY (Office Copy) - Rows 5-20
-    // ========================================
-    
-    setCell('B5', billNumber);
-    setCell('C5', bdnCode);
-    setCell('H5', date);
-    
-    setCell('B6', fullName);
-    setCell('E6', patient.gender || 'Male');
-    setCell('H6', patient.age || '18');
-    
-    setCell('B7', address);
-    setCell('H7', patient.phone || '');
-    
-    setCell('B8', totalFee);
-    setCell('C8', discountPercentage);
-    setCell('H8', approvedBy);
-    
-    setCell('B9', totalAfterDiscount);
-    setCell('C9', 'Received Amount'); // Label
-    setCell('D9', totalReceived);
-    setCell('H9', balance);
+    updateCell('B6', fullName);
+    updateCell('F6', patient.gender || "");
+    updateCell('H6', patient.age || "");
 
-    // Draw ovals for therapies - Main copy
-    // Oval columns: C, D, E, F, G, H, I
-    const ovalCols = ['C', 'D', 'E', 'F', 'G', 'H', 'I'];
+    updateCell('B7', address);
+    updateCell('H7', patient.phone || "");
+
+    updateCell('B8', totalFee);
+    updateCell('D8', `${discountPercentage}%`);
+    updateCell('H8', approvedBy);
+
+    updateCell('B9', totalAfterDiscount);
+    updateCell('D9', totalReceived);
+    updateCell('H9', balance);
+
+    // Therapy names and ovals - First Copy
+    const firstCopyTherapyStartRow = 10;
     
-    therapyList.forEach((therapy, idx) => {
-      const baseRow = 11 + (idx * 2); // Rows 11, 13, 15 for 3 therapies
-      const sessions = Math.min(parseInt(therapy.sessions) || 0, 7);
+    therapyList.forEach((therapy, index) => {
+      const nameRow = firstCopyTherapyStartRow + (index * 2);
+      const ovalRow = nameRow + 1;
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
-      // Set therapy name (merge A:B)
-      try {
-        worksheet.mergeCells(`A${baseRow}:B${baseRow}`);
-        setCell(`A${baseRow}`, therapy.name);
-      } catch (e) {
-        // If already merged, just set value
-        setCell(`A${baseRow}`, therapy.name);
-      }
+      // Therapy name
+      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
+      const nameCell = worksheet.getCell(`B${nameRow}`);
+      nameCell.font = { bold: true, size: 11 };
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
-      // Draw ovals
+      // Session ovals
+      let ovalSymbols = "";
       for (let i = 0; i < sessions; i++) {
-        drawOval(`${ovalCols[i]}${baseRow}`);
+        ovalSymbols += "⭕ ";
       }
+      
+      updateCell(`B${ovalRow}`, ovalSymbols);
+      const ovalCell = worksheet.getCell(`B${ovalRow}`);
+      ovalCell.font = { size: 14 };
+      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
 
-    // ========================================
-    // SECOND COPY (Middle Copy) - Rows 22-38
-    // ========================================
+    // ==========================================
+    // SECOND COPY (Middle Bill)
+    // ==========================================
     
-    const copy2Start = 22;
-    
-    setCell(`B${copy2Start}`, billNumber);
-    setCell(`D${copy2Start}`, patient.idno || '');
-    setCell(`H${copy2Start}`, date);
-    
-    setCell(`B${copy2Start + 1}`, fullName);
-    setCell(`E${copy2Start + 1}`, patient.gender || '');
-    setCell(`H${copy2Start + 1}`, patient.age || '');
-    
-    setCell(`B${copy2Start + 2}`, address);
-    setCell(`H${copy2Start + 2}`, patient.phone || '');
-    
-    setCell(`B${copy2Start + 3}`, totalFee);
-    setCell(`D${copy2Start + 3}`, discountPercentage);
-    setCell(`H${copy2Start + 3}`, approvedBy);
-    
-    setCell(`B${copy2Start + 4}`, totalAfterDiscount);
-    setCell(`D${copy2Start + 4}`, totalReceived);
-    setCell(`H${copy2Start + 4}`, balance);
+    updateCell('B25', billNumber);
+    updateCell('E25', patient.idno || "");
+    updateCell('H25', date);
 
-    // Draw ovals for second copy
-    therapyList.forEach((therapy, idx) => {
-      const baseRow = copy2Start + 6 + (idx * 2);
-      const sessions = Math.min(parseInt(therapy.sessions) || 0, 7);
+    updateCell('B26', fullName);
+    updateCell('F26', patient.gender || "");
+    updateCell('H26', patient.age || "");
+
+    updateCell('B27', address);
+    updateCell('H27', patient.phone || "");
+
+    updateCell('B28', totalFee);
+    updateCell('D28', `${discountPercentage}%`);
+    updateCell('H28', approvedBy);
+
+    updateCell('B29', totalAfterDiscount);
+    updateCell('D29', totalReceived);
+    updateCell('H29', balance);
+
+    // Therapy names and ovals - Second Copy
+    const secondCopyTherapyStartRow = 30;
+    
+    therapyList.forEach((therapy, index) => {
+      const nameRow = secondCopyTherapyStartRow + (index * 2);
+      const ovalRow = nameRow + 1;
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
-      try {
-        worksheet.mergeCells(`A${baseRow}:B${baseRow}`);
-        setCell(`A${baseRow}`, therapy.name);
-      } catch (e) {
-        setCell(`A${baseRow}`, therapy.name);
-      }
+      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
+      const nameCell = worksheet.getCell(`B${nameRow}`);
+      nameCell.font = { bold: true, size: 11 };
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
+      let ovalSymbols = "";
       for (let i = 0; i < sessions; i++) {
-        drawOval(`${ovalCols[i]}${baseRow}`);
+        ovalSymbols += "⭕ ";
       }
+      
+      updateCell(`B${ovalRow}`, ovalSymbols);
+      const ovalCell = worksheet.getCell(`B${ovalRow}`);
+      ovalCell.font = { size: 14 };
+      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
 
-    // ========================================
-    // THIRD COPY (Patient Copy) - Rows 40+
-    // ========================================
+    // ==========================================
+    // STRIP SECTION (Bottom)
+    // ==========================================
     
-    const copy3Start = 40;
-    
-    setCell(`B${copy3Start}`, bdnCode);
-    setCell(`E${copy3Start}`, fullName);
-    setCell(`H${copy3Start}`, `Date ${date}`);
-    
-    setCell(`B${copy3Start + 1}`, billNumber);
+    updateCell('B45', patient.idno || "");
+    updateCell('D45', billNumber);
+    updateCell('F45', fullName);
+    updateCell('H45', date);
 
-    // Draw ovals for patient copy
-    therapyList.forEach((therapy, idx) => {
-      const baseRow = copy3Start + 3 + (idx * 2);
-      const sessions = Math.min(parseInt(therapy.sessions) || 0, 7);
+    // Therapy names and ovals - Strip
+    const stripTherapyStartRow = 46;
+    
+    therapyList.forEach((therapy, index) => {
+      const nameRow = stripTherapyStartRow + (index * 2);
+      const ovalRow = nameRow + 1;
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
-      try {
-        worksheet.mergeCells(`A${baseRow}:B${baseRow}`);
-        setCell(`A${baseRow}`, therapy.name);
-      } catch (e) {
-        setCell(`A${baseRow}`, therapy.name);
-      }
+      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
+      const nameCell = worksheet.getCell(`B${nameRow}`);
+      nameCell.font = { bold: true, size: 10 };
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
+      let ovalSymbols = "";
       for (let i = 0; i < sessions; i++) {
-        drawOval(`${ovalCols[i]}${baseRow}`);
+        ovalSymbols += "⭕ ";
       }
+      
+      updateCell(`B${ovalRow}`, ovalSymbols);
+      const ovalCell = worksheet.getCell(`B${ovalRow}`);
+      ovalCell.font = { size: 12 };
+      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
 
-    // Generate file
+    // Send file
     const buffer = await workbook.xlsx.writeBuffer();
+    const cleanPatientName = fullName.replace(/[^a-zA-Z0-9]/g, '_');
+    const cleanBillNumber = billNumber.replace(/\//g, '_');
+    const therapyNames = therapyList.map(t => t.name).join('_');
 
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename=therapy_receipt_${patient.idno || 'patient'}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    const fileName = `${cleanBillNumber}_${cleanPatientName}_${therapyNames}_therapy_receipt.xlsx`;
 
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
     res.send(buffer);
 
-  } catch (err) {
-    console.error("Error exporting therapy receipt:", err);
-    res.status(500).json({ message: "Internal Server Error", error: err.message });
+  } catch (error) {
+    console.error("Error exporting therapy cash receipt:", error);
+    res.status(500).json({ 
+      message: "Internal Server Error", 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
-
 
 // Export this function in module.exports at the bottom of patientController.js
 // Don't forget to add this to module.exports at the bottom of patientController.js
