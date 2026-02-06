@@ -80,6 +80,149 @@ const getAllSales = async (req, res) => {
   }
 };
 
+// ✅ NEW: Get single sale by ID
+const getSaleById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sale = await saleModel.findById(id);
+    
+    if (!sale) {
+      return res.status(404).json({ success: false, message: 'Sale not found' });
+    }
+    
+    res.status(200).json({ success: true, sale });
+  } catch (error) {
+    console.error('Error fetching sale:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch sale' });
+  }
+};
+
+// ✅ NEW: Update sale
+const updateSale = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      patientId,
+      patientName,
+      saleDate,
+      medicines,
+      discount = 0,
+      discountApprovedBy = "",
+    } = req.body;
+
+    // Find existing sale
+    const existingSale = await saleModel.findById(id);
+    if (!existingSale) {
+      return res.status(404).json({ message: 'Sale not found' });
+    }
+
+    // Restore stock from old sale
+    for (let oldMed of existingSale.medicines) {
+      const stockMed = await medicineModel.findOne({ "Product Name": oldMed.medicineName });
+      if (stockMed) {
+        stockMed.Quantity += oldMed.quantity;
+        await stockMed.save();
+      }
+    }
+
+    // Deduct stock for new medicines
+    let subtotal = 0;
+    for (let med of medicines) {
+      const stockMed = await medicineModel.findOne({ "Product Name": med.medicineName });
+
+      if (!stockMed) {
+        // Restore the stock we just added back
+        for (let oldMed of existingSale.medicines) {
+          const restoreMed = await medicineModel.findOne({ "Product Name": oldMed.medicineName });
+          if (restoreMed) {
+            restoreMed.Quantity -= oldMed.quantity;
+            await restoreMed.save();
+          }
+        }
+        return res.status(404).json({ message: `Medicine "${med.medicineName}" not found in stock` });
+      }
+
+      if (stockMed.Quantity < med.quantity) {
+        // Restore the stock we just added back
+        for (let oldMed of existingSale.medicines) {
+          const restoreMed = await medicineModel.findOne({ "Product Name": oldMed.medicineName });
+          if (restoreMed) {
+            restoreMed.Quantity -= oldMed.quantity;
+            await restoreMed.save();
+          }
+        }
+        return res.status(400).json({
+          message: `Not enough stock for "${med.medicineName}". Available: ${stockMed.Quantity}`,
+        });
+      }
+
+      // Reduce stock
+      stockMed.Quantity -= med.quantity;
+      await stockMed.save();
+
+      // Compute totalPrice for each medicine
+      med.totalPrice = med.quantity * med.pricePerUnit;
+      subtotal += med.totalPrice;
+    }
+
+    // Calculate GST and totals
+    const sgst = subtotal * 0.025;
+    const cgst = subtotal * 0.025;
+    const discountAmount = (subtotal * discount) / 100;
+    const subtotalAfterDiscount = subtotal - discountAmount;
+    const totalAmount = Math.round(subtotalAfterDiscount);
+
+    // Update sale
+    existingSale.patientId = patientId;
+    existingSale.patientName = patientName;
+    existingSale.saleDate = saleDate;
+    existingSale.medicines = medicines;
+    existingSale.subtotal = subtotal;
+    existingSale.sgst = sgst;
+    existingSale.cgst = cgst;
+    existingSale.totalAmount = totalAmount;
+    existingSale.discount = discount;
+    existingSale.discountApprovedBy = discountApprovedBy;
+
+    await existingSale.save();
+
+    res.status(200).json({ message: 'Sale updated successfully', sale: existingSale });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// ✅ NEW: Delete sale
+const deleteSale = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the sale
+    const sale = await saleModel.findById(id);
+    if (!sale) {
+      return res.status(404).json({ message: 'Sale not found' });
+    }
+
+    // Restore stock for all medicines in the sale
+    for (let med of sale.medicines) {
+      const stockMed = await medicineModel.findOne({ "Product Name": med.medicineName });
+      if (stockMed) {
+        stockMed.Quantity += med.quantity;
+        await stockMed.save();
+      }
+    }
+
+    // Delete the sale
+    await saleModel.findByIdAndDelete(id);
+
+    res.status(200).json({ message: 'Sale deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 const generateSaleReport = async (req, res) => {
   try {
     const { dateFrom, dateTo, patientId, patientName } = req.query;
@@ -408,4 +551,11 @@ const generateSaleReport = async (req, res) => {
 };
 
 // Update the exports at the bottom of the file
-module.exports = { recordSale, getAllSales, generateSaleReport };
+module.exports = { 
+  recordSale, 
+  getAllSales, 
+  getSaleById,
+  updateSale,
+  deleteSale,
+  generateSaleReport 
+};
