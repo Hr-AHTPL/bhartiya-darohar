@@ -1,46 +1,16 @@
-const jwt = require('jsonwebtoken');
+const jwt=require('jsonwebtoken')
+const ensureAuthenticated=(req, res, next)=>{
+    const auth = req.headers['authorization']
+    if(!auth){
+        return res.status(403).json({message:"Unauthorized, JWT token is required"});
 
-// ✅ Standard authentication middleware
-const ensureAuthenticated = (req, res, next) => {
-    const auth = req.headers['authorization'];
-    if (!auth) {
-        return res.status(403).json({ message: "Unauthorized, JWT token is required" });
-    }
-    try {
+    }try{
         const decoded = jwt.verify(auth, process.env.JWT_SECRET);
-        req.user = decoded;
+        req.user=decoded;
         next();
-    } catch (err) {
-        return res.status(403).json({ message: "Unauthorized, JWT token wrong or expired" });
     }
-};
-
-// ✅ NEW: Admin-only access middleware
-const ensureAdmin = (req, res, next) => {
-    const auth = req.headers['authorization'];
-    if (!auth) {
-        return res.status(403).json({ message: "Unauthorized, JWT token is required" });
+    catch(err){
+    return res.status(403).json({message:"Unauthorized, JWT token wrong or expired"});
     }
-    try {
-        const decoded = jwt.verify(auth, process.env.JWT_SECRET);
-        req.user = decoded;
-        
-        // Check if user role is admin
-        if (decoded.role !== 'admin') {
-            return res.status(403).json({ 
-                message: "Access denied. Admin privileges required.",
-                requiredRole: "admin",
-                userRole: decoded.role
-            });
-        }
-        
-        next();
-    } catch (err) {
-        return res.status(403).json({ message: "Unauthorized, JWT token wrong or expired" });
-    }
-};
-
-// ✅ Export both ways for backward compatibility
-module.exports = ensureAuthenticated; // Default export (old style)
-module.exports.ensureAuthenticated = ensureAuthenticated; // Named export
-module.exports.ensureAdmin = ensureAdmin; // Named export
+}
+module.exports = ensureAuthenticated;
