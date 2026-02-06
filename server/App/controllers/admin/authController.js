@@ -6,11 +6,11 @@ const signup = async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
 
-    const allowedRoles = ["doctor", "receptionist"];
+    const allowedRoles = ["doctor", "receptionist", "admin"]; // ✅ Added 'admin'
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid role. Allowed roles: doctor or receptionist.",
+        message: "Invalid role. Allowed roles: doctor, receptionist, or admin.",
       });
     }
 
@@ -46,7 +46,6 @@ const signup = async (req, res) => {
   }
 };
 
-// const jwt = require('jsonwebtoken'); // ensure this is at the top
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -68,7 +67,7 @@ const login = async (req, res) => {
     }
 
     const jwtToken = jwt.sign(
-      { email: user.email, _id: user._id },
+      { email: user.email, _id: user._id, role: user.role }, // ✅ Added role to JWT
       process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
