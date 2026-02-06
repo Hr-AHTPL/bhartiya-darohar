@@ -418,13 +418,14 @@ const exportPrakritiCashReceipt = async (req, res) => {
         percentage: discount,
         approvedBy: approvalby,
       };
-    } else if (purpose === "Therapy") {
+    } //else if (purpose === "Therapy") {
   // ❌ Therapy receipts now use the NEW endpoint /therapy-receipt/:id
   // This endpoint should NOT be used for therapy anymore
-  return res.status(400).json({ 
-    message: "Please use the new therapy receipt endpoint: /therapy-receipt/:id" 
-  });
-} else {
+  //return res.status(400).json({ 
+   // message: "Please use the new therapy receipt endpoint: /therapy-receipt/:id" 
+  //});
+//} 
+else {
       // Others
       lastVisit.others = purpose;
       lastVisit.othersamount = totalAfterDiscount;
