@@ -977,7 +977,6 @@ const handleCashReceiptSubmit = async () => {
     return;
   }
 
-  // Validate therapy selection
   if (finalPurpose === "Therapy" && addedTherapies.length === 0) {
     alert("Please add at least one therapy");
     return;
@@ -986,9 +985,9 @@ const handleCashReceiptSubmit = async () => {
   try {
     let response;
     
-    // ✅ Use NEW endpoint for Therapy, OLD endpoint for others
+    // ✅ Use DIFFERENT endpoints based on purpose
     if (finalPurpose === "Therapy") {
-      // NEW endpoint - reads therapies from database, shows oval sessions
+      // NEW ENDPOINT: Therapy receipts with oval session tracking
       response = await axios.get(
         `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`,
         {
@@ -996,7 +995,7 @@ const handleCashReceiptSubmit = async () => {
         }
       );
     } else {
-      // OLD endpoint - for Consultation, Prakriti Parikshan, Others
+      // OLD ENDPOINT: Consultation, Prakriti Parikshan, Others
       response = await axios.get(
         `${API_BASE_URL}/api/website/enquiry/prakriti-registration/${selectedPatient.id}`,
         {
@@ -1027,7 +1026,7 @@ const handleCashReceiptSubmit = async () => {
 
     window.URL.revokeObjectURL(url);
     console.log(
-      `Cash receipt generated for ${selectedPatient.name} - Purpose: ${finalPurpose}, Fee: ₹${numericFee}, Received: ₹${numericReceived}`
+      `Cash receipt generated for ${selectedPatient.name} - Purpose: ${finalPurpose}`
     );
     
     setOtherPurpose("");
