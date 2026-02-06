@@ -952,7 +952,7 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
     setShowReappointmentDialog(false);
   };
 
-  const handleCashReceiptSubmit = async () => {
+const handleCashReceiptSubmit = async () => {
   if (!selectedPatient) return;
 
   const numericFee = parseFloat(feeAmount);
@@ -984,31 +984,36 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
   }
 
   try {
-    // Prepare therapy names for display
-    const therapyNames = addedTherapies.map(t => 
-      `${t.name} (${t.sessions} session${t.sessions > 1 ? 's' : ''})`
-    ).join(', ');
-
-    const response = await axios.get(
-      `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`,
-      {
-        responseType: "blob",
-        params: {
-          feeAmount: numericFee,
-          receivedAmount: numericReceived,
-          purpose: finalPurpose,
-          ...(finalPurpose === "Therapy" && { 
-            therapyName: therapyNames,
-            therapies: JSON.stringify(addedTherapies) // Send full therapy array
-          }),
-          discount: discount,
-          approvalby: approvalby,
-        },
-      }
-    );
+    let response;
+    
+    // ✅ Use NEW endpoint for Therapy, OLD endpoint for others
+    if (finalPurpose === "Therapy") {
+      // NEW endpoint - reads therapies from database, shows oval sessions
+      response = await axios.get(
+        `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`,
+        {
+          responseType: "blob"
+        }
+      );
+    } else {
+      // OLD endpoint - for Consultation, Prakriti Parikshan, Others
+      response = await axios.get(
+        `${API_BASE_URL}/api/website/enquiry/prakriti-registration/${selectedPatient.id}`,
+        {
+          responseType: "blob",
+          params: {
+            feeAmount: numericFee,
+            receivedAmount: numericReceived,
+            purpose: finalPurpose,
+            discount: discount,
+            approvalby: approvalby,
+          },
+        }
+      );
+    }
 
     const blob = new Blob([response.data], {
-      type: "application/pdf",
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
     const url = window.URL.createObjectURL(blob);
 
@@ -1030,12 +1035,12 @@ const handleSavePatient = async (updatedData: Partial<Patient>) => {
     setReceivedAmount("");
     setReceiptPurpose("");
     setTherapyName("");
-    setAddedTherapies([]); // ADD THIS
-    setCurrentTherapySessions("1"); // ADD THIS
+    setAddedTherapies([]);
+    setCurrentTherapySessions("1");
     setShowCashReceiptDialog(false);
   } catch (error) {
     console.error("Error generating cash receipt:", error);
-    alert("Failed to generate cash receipt.");
+    alert("Failed to generate cash receipt: " + (error.response?.data?.message || error.message));
   }
 };
 
