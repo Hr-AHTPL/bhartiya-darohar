@@ -173,6 +173,30 @@ useEffect(() => {
     quantity: "",
   });
 
+
+  const [editSuggestions, setEditSuggestions] = useState([]);
+const [showEditSuggestions, setShowEditSuggestions] = useState(false);
+const editWrapperRef = useRef(null);
+  
+const [isEditingSale, setIsEditingSale] = useState(false);
+const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
+const [editSale, setEditSale] = useState({
+  patientId: "",
+  patientName: "",
+  medicines: [],
+  saleDate: "",
+  discount: "",
+  discountApprovedBy: "",
+});
+const [editCurrentMedicine, setEditCurrentMedicine] = useState({
+  medicineName: "",
+  batch: "",
+  hsn: "",
+  expiry: "",
+  pricePerUnit: "",
+  quantity: "",
+});
+
   // Static min stock value as requested
   const MIN_STOCK = 10;
 
@@ -207,6 +231,7 @@ const [editClosingStockValue, setEditClosingStockValue] = useState("");
 const [closingStockYear, setClosingStockYear] = useState(new Date().getFullYear());
 const [closingStockNotes, setClosingStockNotes] = useState("");
 const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
+
   const fetchSuggestions = debounce(async (query) => {
     try {
       if (!query.trim()) return setSuggestions([]);
@@ -223,6 +248,45 @@ const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
       console.error("Error fetching medicine list:", err);
     }
   }, 300);
+
+  // Fetch suggestions for edit modal
+const fetchEditSuggestions = debounce(async (query) => {
+  try {
+    if (!query.trim()) return setEditSuggestions([]);
+
+    const res = await axios.get(`${API_BASE_URL}/medicine/view`);
+    if (res.data.status === 1) {
+      const filtered = res.data.medicineList.filter((med: any) =>
+        med["Product Name"].toLowerCase().includes(query.toLowerCase())
+      );
+      setEditSuggestions(filtered);
+      setShowEditSuggestions(true);
+    }
+  } catch (err) {
+    console.error("Error fetching medicine list:", err);
+  }
+}, 300);
+
+// Handle click outside for edit suggestions
+useEffect(() => {
+  function handleClickOutside(event: any) {
+    if (editWrapperRef.current && !editWrapperRef.current.contains(event.target)) {
+      setShowEditSuggestions(false);
+    }
+  }
+  document.addEventListener("mousedown", handleClickOutside);
+  return () => document.removeEventListener("mousedown", handleClickOutside);
+}, []);
+
+// Handle edit suggestion click
+const handleEditSuggestionClick = (med: any) => {
+  setEditCurrentMedicine({
+    ...editCurrentMedicine,
+    medicineName: med["Product Name"],
+    pricePerUnit: med.Price?.toString() || "",
+  });
+  setShowEditSuggestions(false);
+};
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -256,6 +320,38 @@ const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
     return pages;
   };
 
+  // Update quantity of medicine in edit sale
+const updateMedicineQuantityInEdit = (medicineId: string, newQuantity: number) => {
+  setEditSale({
+    ...editSale,
+    medicines: editSale.medicines.map((med) =>
+      med.id === medicineId
+        ? {
+            ...med,
+            quantity: newQuantity,
+            totalPrice: newQuantity * med.pricePerUnit,
+          }
+        : med
+    ),
+  });
+};
+
+// Update price of medicine in edit sale
+const updateMedicinePriceInEdit = (medicineId: string, newPrice: number) => {
+  setEditSale({
+    ...editSale,
+    medicines: editSale.medicines.map((med) =>
+      med.id === medicineId
+        ? {
+            ...med,
+            pricePerUnit: newPrice,
+            totalPrice: med.quantity * newPrice,
+          }
+        : med
+    ),
+  });
+};
+
   // Generate page numbers for sales pagination
   const getSalesPageNumbers = () => {
     const pages = [];
@@ -279,60 +375,61 @@ const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
   };
 
   // Fetch medicines from API
-  useEffect(() => {
+  
     const fetchMedicines = async () => {
-      try {
-        setLoading(true);
-        console.log("Fetching medicines from API...");
-        const response = await axios.get(`${API_BASE_URL}/medicine/view`);
-        console.log("API Response:", response.data);
+  try {
+    setLoading(true);
+    console.log("Fetching medicines from API...");
+    const response = await axios.get(`${API_BASE_URL}/medicine/view`);
+    console.log("API Response:", response.data);
 
-        let medicineData = [];
+    let medicineData = [];
 
-        if (response.data && Array.isArray(response.data.medicineList)) {
-          medicineData = response.data.medicineList;
-        } else {
-          console.error("Unexpected API response format:", response.data);
-          throw new Error(
-            "API returned unexpected data format - medicineList not found"
-          );
-        }
+    if (response.data && Array.isArray(response.data.medicineList)) {
+      medicineData = response.data.medicineList;
+    } else {
+      console.error("Unexpected API response format:", response.data);
+      throw new Error(
+        "API returned unexpected data format - medicineList not found"
+      );
+    }
 
-        const transformedData = medicineData.map(
-          (item: any, index: number) => ({
-            id: item.Code || `med-${index}`,
-            Code: item.Code || "",
-            "Product Name": item["Product Name"] || "",
-            Unit: item.Unit || "",
-            Company: item.Company || "",
-            Quantity: Number(item.Quantity) || 0,
-            Price: Number(item.Price) || 0,
-          })
-        );
+    const transformedData = medicineData.map(
+      (item: any, index: number) => ({
+        id: item.Code || `med-${index}`,
+        Code: item.Code || "",
+        "Product Name": item["Product Name"] || "",
+        Unit: item.Unit || "",
+        Company: item.Company || "",
+        Quantity: Number(item.Quantity) || 0,
+        Price: Number(item.Price) || 0,
+      })
+    );
 
-        // Sort the data by Code (numerically if it's a number, lexicographically otherwise)
-        const sortedData = transformedData.sort((a, b) => {
-          const codeA = isNaN(a.Code) ? a.Code : Number(a.Code);
-          const codeB = isNaN(b.Code) ? b.Code : Number(b.Code);
-          return codeA > codeB ? 1 : codeA < codeB ? -1 : 0;
-        });
+    const sortedData = transformedData.sort((a, b) => {
+      const codeA = isNaN(a.Code) ? a.Code : Number(a.Code);
+      const codeB = isNaN(b.Code) ? b.Code : Number(b.Code);
+      return codeA > codeB ? 1 : codeA < codeB ? -1 : 0;
+    });
 
-        console.log("Sorted data:", sortedData);
-        setMedicines(sortedData);
-        setError(null);
-      } catch (err) {
-        console.error("Error fetching medicines:", err);
-        setError(
-          "Failed to fetch medicines from API. Please check if the API server is running."
-        );
-        setMedicines([]);
-      } finally {
-        setLoading(false);
-      }
-    };
+    console.log("Sorted data:", sortedData);
+    setMedicines(sortedData);
+    setError(null);
+  } catch (err) {
+    console.error("Error fetching medicines:", err);
+    setError(
+      "Failed to fetch medicines from API. Please check if the API server is running."
+    );
+    setMedicines([]);
+  } finally {
+    setLoading(false);
+  }
+};
 
-    fetchMedicines();
-  }, []);
+ useEffect(() => {
+  fetchMedicines();
+}, []);
+
   const [salesSummary, setSalesSummary] = useState({
     todayTotal: 0,
     monthlyTotal: 0,
@@ -403,6 +500,192 @@ const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
 
   fetchClosingStock();
 }, []);
+
+
+// Delete Sale Handler
+const handleDeleteSale = async (saleId: string) => {
+  if (!confirm("Are you sure you want to delete this sale? The stock will be restored to inventory.")) {
+    return;
+  }
+
+  try {
+    const response = await axios.delete(`${API_BASE_URL}/api/sale/${saleId}`);
+    
+    if (response.status === 200) {
+      alert("Sale deleted successfully! Stock has been restored.");
+      
+      // Refresh sales list
+      const salesResponse = await fetch(`${API_BASE_URL}/api/sale/view`);
+      const data = await salesResponse.json();
+      if (data.success) {
+        setSales(data.sales);
+      }
+      
+      // Refresh medicine inventory
+      fetchMedicines();
+    }
+  } catch (error: any) {
+    console.error("Error deleting sale:", error);
+    alert("Failed to delete sale: " + (error.response?.data?.message || error.message));
+  }
+};
+
+// Edit Sale Handler
+const handleEditSale = async (saleId: string) => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/api/sale/${saleId}`);
+    
+    if (response.data.success) {
+      const sale = response.data.sale;
+      setEditingSaleId(sale._id);
+      setEditSale({
+        patientId: sale.patientId,
+        patientName: sale.patientName,
+        medicines: sale.medicines,
+        saleDate: sale.saleDate,
+        discount: sale.discount?.toString() || "",
+        discountApprovedBy: sale.discountApprovedBy || "",
+      });
+      setIsEditingSale(true);
+    }
+  } catch (error: any) {
+    console.error("Error fetching sale:", error);
+    alert("Failed to load sale details: " + (error.response?.data?.message || error.message));
+  }
+};
+
+// Update Sale Handler
+const handleUpdateSale = async () => {
+  if (!editSale.patientId || !editSale.patientName || editSale.medicines.length === 0) {
+    alert("Please fill in all required fields and add at least one medicine.");
+    return;
+  }
+
+  try {
+    const response = await axios.put(
+      `${API_BASE_URL}/api/sale/${editingSaleId}`,
+      {
+        patientId: editSale.patientId,
+        patientName: editSale.patientName,
+        saleDate: editSale.saleDate,
+        medicines: editSale.medicines,
+        discount: parseFloat(editSale.discount) || 0,
+        discountApprovedBy: editSale.discountApprovedBy,
+      }
+    );
+
+    if (response.status === 200) {
+      alert("Sale updated successfully!");
+      setIsEditingSale(false);
+      setEditingSaleId(null);
+      setEditSale({
+        patientId: "",
+        patientName: "",
+        medicines: [],
+        saleDate: "",
+        discount: "",
+        discountApprovedBy: "",
+      });
+      setEditCurrentMedicine({
+        medicineName: "",
+        batch: "",
+        hsn: "",
+        expiry: "",
+        pricePerUnit: "",
+        quantity: "",
+      });
+      
+      // Refresh sales list
+      const salesResponse = await fetch(`${API_BASE_URL}/api/sale/view`);
+      const data = await salesResponse.json();
+      if (data.success) {
+        setSales(data.sales);
+      }
+      
+      // Refresh medicine inventory
+      fetchMedicines();
+    }
+  } catch (error: any) {
+    console.error("Error updating sale:", error);
+    alert("Failed to update sale: " + (error.response?.data?.message || error.message));
+  }
+};
+
+// Add Medicine to Edit Sale
+const addMedicineToEditSale = () => {
+  if (
+    !editCurrentMedicine.medicineName ||
+    !editCurrentMedicine.pricePerUnit ||
+    !editCurrentMedicine.quantity
+  ) {
+    alert("Please fill in medicine name, price, and quantity.");
+    return;
+  }
+
+  const newMed = {
+    id: `edit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ UNIQUE ID
+    medicineName: editCurrentMedicine.medicineName,
+    batch: editCurrentMedicine.batch,
+    hsn: editCurrentMedicine.hsn,
+    expiry: editCurrentMedicine.expiry,
+    pricePerUnit: parseFloat(editCurrentMedicine.pricePerUnit),
+    quantity: parseFloat(editCurrentMedicine.quantity),
+    totalPrice:
+      parseFloat(editCurrentMedicine.pricePerUnit) *
+      parseFloat(editCurrentMedicine.quantity),
+  };
+
+  setEditSale({
+    ...editSale,
+    medicines: [...editSale.medicines, newMed],
+  });
+
+  setEditCurrentMedicine({
+    medicineName: "",
+    batch: "",
+    hsn: "",
+    expiry: "",
+    pricePerUnit: "",
+    quantity: "",
+  });
+  
+  setShowEditSuggestions(false);
+};
+
+// Remove Medicine from Edit Sale
+const removeMedicineFromEditSale = (medicineId: string) => {
+  setEditSale({
+    ...editSale,
+    medicines: editSale.medicines.filter((m) => m.id !== medicineId),
+  });
+};
+
+// Calculate Edit Sale Total
+const calculateEditSaleTotal = () => {
+  const subtotal = editSale.medicines.reduce(
+    (sum, med) => sum + med.totalPrice,
+    0
+  );
+  const discountAmount = (subtotal * (parseFloat(editSale.discount) || 0)) / 100;
+  const subtotalAfterDiscount = subtotal - discountAmount;
+  const sgst = subtotal * 0.025;
+  const cgst = subtotal * 0.025;
+  const totalBeforeRound = subtotalAfterDiscount;
+  const totalAmount = Math.round(totalBeforeRound);
+  const roundoff = totalAmount - totalBeforeRound;
+
+  return {
+    subtotal,
+    discountAmount,
+    sgst,
+    cgst,
+    roundoff,
+    totalAmount,
+  };
+};
+
+
+
 
 const handleUpdateClosingStock = async () => {
   if (!editClosingStockValue || editClosingStockValue.trim() === "") {
@@ -579,76 +862,46 @@ const handleUpdateClosingStock = async () => {
   };
 
   // Sale related functions
-  const addMedicineToSale = async () => {
-    const { medicineName, batch, hsn, expiry, pricePerUnit, quantity } =
-      currentMedicine;
+  
+const addMedicineToSale = () => {
+  if (
+    !currentMedicine.medicineName ||
+    !currentMedicine.pricePerUnit ||
+    !currentMedicine.quantity
+  ) {
+    alert("Please fill in medicine name, price, and quantity.");
+    return;
+  }
 
-    if (!medicineName || !quantity || !pricePerUnit) {
-      alert("Please fill all required medicine fields");
-      return;
-    }
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/medicine/view`);
-      const data = await res.json();
-
-      if (!data || !Array.isArray(data.medicineList)) {
-        throw new Error("Invalid response from medicine DB");
-      }
-
-      // Match by medicine name only
-      const matched = data.medicineList.find(
-        (med) =>
-          med["Product Name"].toLowerCase().trim() ===
-          medicineName.toLowerCase().trim()
-      );
-
-      if (!matched) {
-        alert("Medicine not found in stock.");
-        return;
-      }
-
-      const availableQty = parseFloat(matched["Quantity"] || 0);
-      const demandedQty = parseFloat(quantity);
-
-      if (availableQty < demandedQty) {
-        alert(
-          `Insufficient stock: Only ${availableQty} units available for ${medicineName}`
-        );
-        return;
-      }
-
-      const totalPrice = parseFloat(pricePerUnit) * demandedQty;
-
-      const medicine = {
-        id: Date.now().toString(),
-        medicineName,
-        batch,
-        hsn,
-        expiry,
-        pricePerUnit: parseFloat(pricePerUnit),
-        quantity: demandedQty,
-        totalPrice,
-      };
-
-      setNewSale((prev) => ({
-        ...prev,
-        medicines: [...prev.medicines, medicine],
-      }));
-
-      setCurrentMedicine({
-        medicineName: "",
-        batch: "",
-        hsn: "",
-        expiry: "",
-        pricePerUnit: "",
-        quantity: "",
-      });
-    } catch (err) {
-      console.error("Error checking stock:", err);
-      alert("Something went wrong while checking medicine stock.");
-    }
+  const newMed = {
+    id: `sale-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ UNIQUE ID
+    medicineName: currentMedicine.medicineName,
+    batch: currentMedicine.batch,
+    hsn: currentMedicine.hsn,
+    expiry: currentMedicine.expiry,
+    pricePerUnit: parseFloat(currentMedicine.pricePerUnit),
+    quantity: parseFloat(currentMedicine.quantity),
+    totalPrice:
+      parseFloat(currentMedicine.pricePerUnit) *
+      parseFloat(currentMedicine.quantity),
   };
+
+  setNewSale({
+    ...newSale,
+    medicines: [...newSale.medicines, newMed],
+  });
+
+  setCurrentMedicine({
+    medicineName: "",
+    batch: "",
+    hsn: "",
+    expiry: "",
+    pricePerUnit: "",
+    quantity: "",
+  });
+  
+  setShowSuggestions(false);
+};
 
   const removeMedicineFromSale = (medicineId: string) => {
     setNewSale({
@@ -713,7 +966,7 @@ const handleUpdateClosingStock = async () => {
     const lastInvoice = localStorage.getItem("lastInvoiceNumber");
     const next = lastInvoice ? parseInt(lastInvoice) + 1 : 1001;
     localStorage.setItem("lastInvoiceNumber", next.toString());
-    return `BD/2025-26/${next}`; // ✅ Return with prefix
+    return `BD/2025-26/M/${next}`; // ✅ Return with prefix
   };
 
   const generateExcelReceipt = async (sale) => {
@@ -1602,6 +1855,7 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
                         <TableHead>CGST (₹)</TableHead>
                         <TableHead>Total Amount (₹)</TableHead>
                         <TableHead>Sale Date</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1615,23 +1869,44 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
                           </TableCell>
                         </TableRow>
                       ) : (
-                        currentSales
-                          .map((sale) => (
-                            <TableRow key={sale.id}>
-                              <TableCell className="font-medium">
-                                {sale.patientId}
-                              </TableCell>
-                              <TableCell>{sale.patientName}</TableCell>
-                              <TableCell>{sale.medicines.length}</TableCell>
-                              <TableCell>₹{sale.subtotal.toFixed(2)}</TableCell>
-                              <TableCell>₹{sale.sgst.toFixed(2)}</TableCell>
-                              <TableCell>₹{sale.cgst.toFixed(2)}</TableCell>
-                              <TableCell className="font-bold text-orange-600">
-                                ₹{sale.totalAmount.toFixed(2)}
-                              </TableCell>
-                              <TableCell>{sale.saleDate}</TableCell>
-                            </TableRow>
-                          ))
+                        currentSales.map((sale) => (
+  <TableRow key={sale._id}>
+    <TableCell className="font-medium">
+      {sale.patientId}
+    </TableCell>
+    <TableCell>{sale.patientName}</TableCell>
+    <TableCell>{sale.medicines?.length || 0}</TableCell>
+    <TableCell>₹{sale.subtotal?.toFixed(2) || '0.00'}</TableCell>
+    <TableCell>₹{sale.sgst?.toFixed(2) || '0.00'}</TableCell>
+    <TableCell>₹{sale.cgst?.toFixed(2) || '0.00'}</TableCell>
+    <TableCell className="font-bold text-orange-600">
+      ₹{sale.totalAmount?.toFixed(2) || '0.00'}
+    </TableCell>
+    <TableCell>{sale.saleDate}</TableCell>
+    <TableCell>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => handleEditSale(sale._id)}
+          className="text-blue-600 border-blue-300 hover:bg-blue-50"
+          title="Edit Sale"
+        >
+          <Edit className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => handleDeleteSale(sale._id)}
+          className="text-red-600 border-red-300 hover:bg-red-50"
+          title="Delete Sale"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </TableCell>
+  </TableRow>
+))
                       )}
                     </TableBody>
                   </Table>
@@ -2286,6 +2561,403 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
             </Card>
           </div>
         )}
+
+
+{/* Edit Sale Modal */}
+{isEditingSale && (
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto py-8">
+    <Card className="w-full max-w-4xl bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl my-8">
+      <CardHeader className="bg-gradient-to-r from-blue-500 to-blue-700 text-white rounded-t-3xl">
+        <CardTitle className="text-2xl font-black">
+          Update Sale
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6 p-6 max-h-[80vh] overflow-y-auto">
+        {/* Patient Information */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="edit-patientId" className="text-blue-700 font-semibold">
+              Patient ID *
+            </Label>
+            <Input
+              id="edit-patientId"
+              value={editSale.patientId}
+              onChange={(e) =>
+                setEditSale({ ...editSale, patientId: e.target.value })
+              }
+              placeholder="Enter patient ID"
+              className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-patientName" className="text-blue-700 font-semibold">
+              Patient Name *
+            </Label>
+            <Input
+              id="edit-patientName"
+              value={editSale.patientName}
+              onChange={(e) =>
+                setEditSale({ ...editSale, patientName: e.target.value })
+              }
+              placeholder="Enter patient name"
+              className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+            />
+          </div>
+        </div>
+
+        {/* Sale Date */}
+        <div>
+          <Label htmlFor="edit-saleDate" className="text-blue-700 font-semibold">
+            Sale Date
+          </Label>
+          <Input
+            id="edit-saleDate"
+            type="date"
+            value={editSale.saleDate}
+            onChange={(e) =>
+              setEditSale({ ...editSale, saleDate: e.target.value })
+            }
+            className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+          />
+        </div>
+
+        {/* Existing Medicines - WITH INLINE EDITING */}
+        {editSale.medicines.length > 0 && (
+          <div className="bg-blue-50 p-4 rounded-2xl border-2 border-blue-300">
+            <h3 className="text-lg font-bold text-blue-800 mb-4">
+              Current Medicines (Click to Edit)
+            </h3>
+            <div className="space-y-3">
+              {editSale.medicines.map((medicine) => (
+                <div
+                  key={medicine.id}
+                  className="bg-white p-4 rounded-lg border border-blue-200"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1">
+                      <span className="font-medium text-lg">
+                        {medicine.medicineName}
+                      </span>
+                      {medicine.batch && (
+                        <span className="text-sm text-gray-600 ml-2">
+                          (Batch: {medicine.batch})
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => removeMedicineFromEditSale(medicine.id)}
+                      className="text-red-600 border-red-300 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  {/* Editable Quantity and Price */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <Label className="text-xs text-gray-600">Quantity</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={medicine.quantity}
+                        onChange={(e) =>
+                          updateMedicineQuantityInEdit(
+                            medicine.id,
+                            parseFloat(e.target.value) || 0
+                          )
+                        }
+                        className="border-blue-200 focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-600">Price/Unit (₹)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={medicine.pricePerUnit}
+                        onChange={(e) =>
+                          updateMedicinePriceInEdit(
+                            medicine.id,
+                            parseFloat(e.target.value) || 0
+                          )
+                        }
+                        className="border-blue-200 focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-600">Total (₹)</Label>
+                      <Input
+                        value={medicine.totalPrice.toFixed(2)}
+                        disabled
+                        className="bg-gray-100 border-gray-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Add New Medicine Section - WITH AUTOCOMPLETE */}
+        <div className="bg-blue-50 p-4 rounded-2xl border-2 border-blue-200">
+          <h3 className="text-lg font-bold text-blue-800 mb-4">
+            Add New Medicine
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Medicine Name with Autocomplete */}
+            <div className="relative" ref={editWrapperRef}>
+              <Label className="text-blue-700 font-semibold">
+                Medicine Name *
+              </Label>
+              <Input
+                value={editCurrentMedicine.medicineName}
+                onChange={(e) => {
+                  setEditCurrentMedicine({
+                    ...editCurrentMedicine,
+                    medicineName: e.target.value,
+                  });
+                  fetchEditSuggestions(e.target.value);
+                }}
+                placeholder="Start typing medicine name..."
+                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+              />
+              {showEditSuggestions && editSuggestions.length > 0 && (
+                <ul className="absolute z-50 w-full bg-white border border-blue-300 rounded-lg mt-1 max-h-60 overflow-auto shadow-lg">
+                  {editSuggestions.map((med: any) => (
+                    <li
+                      key={med.Code}
+                      onClick={() => handleEditSuggestionClick(med)}
+                      className="p-3 hover:bg-blue-50 cursor-pointer border-b last:border-b-0"
+                    >
+                      <div className="font-medium text-blue-900">
+                        {med["Product Name"]}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Code: {med.Code} | Stock: {med.Quantity} | Price: ₹
+                        {med.Price}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Batch */}
+            <div>
+              <Label className="text-blue-700 font-semibold">Batch</Label>
+              <Input
+                value={editCurrentMedicine.batch}
+                onChange={(e) =>
+                  setEditCurrentMedicine({
+                    ...editCurrentMedicine,
+                    batch: e.target.value,
+                  })
+                }
+                placeholder="Enter batch number"
+                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* HSN Number */}
+            <div>
+              <Label className="text-blue-700 font-semibold">HSN Number</Label>
+              <Input
+                value={editCurrentMedicine.hsn}
+                onChange={(e) =>
+                  setEditCurrentMedicine({
+                    ...editCurrentMedicine,
+                    hsn: e.target.value,
+                  })
+                }
+                placeholder="Enter HSN number"
+                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* Expiry Date */}
+            <div>
+              <Label className="text-blue-700 font-semibold">Expiry Date</Label>
+              <Input
+                type="date"
+                value={editCurrentMedicine.expiry}
+                onChange={(e) =>
+                  setEditCurrentMedicine({
+                    ...editCurrentMedicine,
+                    expiry: e.target.value,
+                  })
+                }
+                placeholder="dd-mm-yyyy"
+                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* Price per Unit */}
+            <div>
+              <Label className="text-blue-700 font-semibold">
+                Price per Unit (₹) *
+              </Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={editCurrentMedicine.pricePerUnit}
+                onChange={(e) =>
+                  setEditCurrentMedicine({
+                    ...editCurrentMedicine,
+                    pricePerUnit: e.target.value,
+                  })
+                }
+                placeholder="Enter price per unit"
+                min="0.01"
+                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* Quantity */}
+            <div>
+              <Label className="text-blue-700 font-semibold">Quantity *</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={editCurrentMedicine.quantity}
+                onChange={(e) =>
+                  setEditCurrentMedicine({
+                    ...editCurrentMedicine,
+                    quantity: e.target.value,
+                  })
+                }
+                placeholder="Enter quantity"
+                min="0.01"
+                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* Add Medicine Button */}
+            <div className="flex items-end">
+              <Button
+                onClick={addMedicineToEditSale}
+                className="w-full bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white font-bold py-3 rounded-2xl"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Medicine
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Total Calculation */}
+        {editSale.medicines.length > 0 && (
+          <div className="bg-blue-100 p-4 rounded-2xl border-2 border-blue-300">
+            <h3 className="text-lg font-bold text-blue-800 mb-3">
+              Bill Summary
+            </h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span>Subtotal:</span>
+                <span>₹{calculateEditSaleTotal().subtotal.toFixed(2)}</span>
+              </div>
+              {editSale.discount && (
+                <div className="flex justify-between">
+                  <span>Discount ({editSale.discount}%):</span>
+                  <span>
+                    - ₹{calculateEditSaleTotal().discountAmount.toFixed(2)}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span>SGST (2.5%):</span>
+                <span>₹{calculateEditSaleTotal().sgst.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>CGST (2.5%):</span>
+                <span>₹{calculateEditSaleTotal().cgst.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Roundoff:</span>
+                <span>₹{calculateEditSaleTotal().roundoff.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between font-bold text-lg border-t border-blue-400 pt-2">
+                <span>Grand Total:</span>
+                <span>₹{calculateEditSaleTotal().totalAmount.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Discount Section */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label className="text-blue-700 font-semibold">Discount (%)</Label>
+            <Input
+              type="number"
+              value={editSale.discount || ""}
+              onChange={(e) =>
+                setEditSale({ ...editSale, discount: e.target.value })
+              }
+              placeholder="Enter discount percentage"
+              min="0"
+              max="100"
+              className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+            />
+          </div>
+          <div>
+            <Label className="text-blue-700 font-semibold">Approved By</Label>
+            <Input
+              value={editSale.discountApprovedBy || ""}
+              onChange={(e) =>
+                setEditSale({
+                  ...editSale,
+                  discountApprovedBy: e.target.value,
+                })
+              }
+              placeholder="Enter approver's name"
+              className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
+            />
+          </div>
+        </div>
+
+        <div className="flex space-x-2 pt-4">
+          <Button
+            onClick={handleUpdateSale}
+            className="flex-1 bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white font-bold py-3 rounded-2xl"
+          >
+            Update Sale
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setIsEditingSale(false);
+              setEditingSaleId(null);
+              setEditSale({
+                patientId: "",
+                patientName: "",
+                medicines: [],
+                saleDate: "",
+                discount: "",
+                discountApprovedBy: "",
+              });
+              setEditCurrentMedicine({
+                medicineName: "",
+                batch: "",
+                hsn: "",
+                expiry: "",
+                pricePerUnit: "",
+                quantity: "",
+              });
+            }}
+            className="flex-1 border-blue-300 text-blue-600 hover:bg-blue-50 font-bold py-3 rounded-2xl"
+          >
+            Cancel
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  </div>
+)}
+
+
       </div>
     </div>
   );
