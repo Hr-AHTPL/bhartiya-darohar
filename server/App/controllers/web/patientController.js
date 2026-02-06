@@ -109,13 +109,11 @@ const exportTherapyCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
 
-    // Fetch patient details
     const patient = await patientModel.findById(patientId);
     if (!patient) {
       return res.status(404).json({ message: "Patient not found" });
     }
 
-    // Fetch last visit with therapies
     const lastVisit = await visitModel
       .findOne({ patientId: patient._id })
       .sort({ createdAt: -1 });
@@ -124,7 +122,6 @@ const exportTherapyCashReceipt = async (req, res) => {
       return res.status(404).json({ message: "No last visit found" });
     }
 
-    // Get therapies from database (already stored in visit)
     const therapies = lastVisit.therapies || [];
     
     if (therapies.length === 0) {
@@ -133,10 +130,8 @@ const exportTherapyCashReceipt = async (req, res) => {
       });
     }
 
-    // Limit to first 3 therapies for the receipt
     const therapyList = therapies.slice(0, 3);
 
-    // Generate Bill Number
     const billCounter = await counterModel.findOneAndUpdate(
       { name: "bill_number_counter" },
       { $inc: { value: 1 } },
@@ -144,17 +139,14 @@ const exportTherapyCashReceipt = async (req, res) => {
     );
     const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
 
-    // Calculate totals from therapyWithAmount (amounts already paid for therapies)
     let totalFee = 0;
     let totalReceived = 0;
     let totalDiscount = 0;
 
-    // Calculate from the therapies prescribed
     therapyList.forEach(therapy => {
       const fee = Number(therapy.amount || 0);
       totalFee += fee;
       
-      // Find received amount for this therapy
       const therapyPayment = lastVisit.therapyWithAmount?.find(
         t => t.name === therapy.name
       );
@@ -162,7 +154,6 @@ const exportTherapyCashReceipt = async (req, res) => {
         totalReceived += Number(therapyPayment.receivedAmount || 0);
       }
 
-      // Find discount for this therapy
       const therapyDiscount = lastVisit.discounts?.therapies?.find(
         t => t.name === therapy.name
       );
@@ -176,7 +167,6 @@ const exportTherapyCashReceipt = async (req, res) => {
     const balance = totalAfterDiscount - totalReceived;
     const discountPercentage = totalFee > 0 ? ((totalDiscount / totalFee) * 100).toFixed(2) : 0;
 
-    // Get approved by names
     const approvedByList = [];
     therapyList.forEach(therapy => {
       const therapyDiscount = lastVisit.discounts?.therapies?.find(
@@ -188,7 +178,6 @@ const exportTherapyCashReceipt = async (req, res) => {
     });
     const approvedBy = [...new Set(approvedByList)].join(", ") || "";
 
-    // Load Excel Template
     const templatePath = path.join(
       __dirname,
       "../../assets/receiptGenerationTherapy.xlsx"
@@ -211,12 +200,10 @@ const exportTherapyCashReceipt = async (req, res) => {
       });
     }
 
-    // Prepare data
     const date = lastVisit.date || new Date().toLocaleDateString('en-GB');
     const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
     const address = `${patient.houseno || ""}, ${patient.city || ""}`.trim();
 
-    // Helper function to update cells safely
     const updateCell = (cellAddress, value) => {
       try {
         const cell = worksheet.getCell(cellAddress);
@@ -226,10 +213,7 @@ const exportTherapyCashReceipt = async (req, res) => {
       }
     };
 
-    // ==========================================
-    // FIRST COPY (Top Bill)
-    // ==========================================
-    
+    // FIRST COPY
     updateCell('B5', billNumber);
     updateCell('E5', patient.idno || "");
     updateCell('H5', date);
@@ -249,36 +233,34 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('D9', totalReceived);
     updateCell('H9', balance);
 
-    // Therapy names and ovals - First Copy
-    const firstCopyTherapyStartRow = 10;
+    // ✅ IMPROVED: One oval per cell with proper spacing
+    const firstCopyTherapyStartRow = 11;
     
     therapyList.forEach((therapy, index) => {
-      const nameRow = firstCopyTherapyStartRow + (index * 2);
+      const nameRow = firstCopyTherapyStartRow + (index * 3);
       const ovalRow = nameRow + 1;
       const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
       // Therapy name
       updateCell(`B${nameRow}`, therapy.name.toUpperCase());
       const nameCell = worksheet.getCell(`B${nameRow}`);
-      nameCell.font = { bold: true, size: 11 };
+      nameCell.font = { bold: true, size: 12 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      worksheet.getRow(nameRow).height = 20;
       
-      // Session ovals
-      let ovalSymbols = "";
+      // ONE OVAL PER CELL for better spacing
       for (let i = 0; i < sessions; i++) {
-        ovalSymbols += "⭕ ";
+        const column = String.fromCharCode(66 + i); // B=66, C=67, etc.
+        updateCell(`${column}${ovalRow}`, "⭕");
+        const ovalCell = worksheet.getCell(`${column}${ovalRow}`);
+        ovalCell.font = { size: 24, bold: true };
+        ovalCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        worksheet.getColumn(column).width = 6;
       }
-      
-      updateCell(`B${ovalRow}`, ovalSymbols);
-      const ovalCell = worksheet.getCell(`B${ovalRow}`);
-      ovalCell.font = { size: 14 };
-      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      worksheet.getRow(ovalRow).height = 30;
     });
 
-    // ==========================================
-    // SECOND COPY (Middle Bill)
-    // ==========================================
-    
+    // SECOND COPY
     updateCell('B25', billNumber);
     updateCell('E25', patient.idno || "");
     updateCell('H25', date);
@@ -298,11 +280,40 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('D29', totalReceived);
     updateCell('H29', balance);
 
-    // Therapy names and ovals - Second Copy
-    const secondCopyTherapyStartRow = 30;
+    const secondCopyTherapyStartRow = 31;
     
     therapyList.forEach((therapy, index) => {
-      const nameRow = secondCopyTherapyStartRow + (index * 2);
+      const nameRow = secondCopyTherapyStartRow + (index * 3);
+      const ovalRow = nameRow + 1;
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
+      
+      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
+      const nameCell = worksheet.getCell(`B${nameRow}`);
+      nameCell.font = { bold: true, size: 12 };
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      worksheet.getRow(nameRow).height = 20;
+      
+      for (let i = 0; i < sessions; i++) {
+        const column = String.fromCharCode(66 + i);
+        updateCell(`${column}${ovalRow}`, "⭕");
+        const ovalCell = worksheet.getCell(`${column}${ovalRow}`);
+        ovalCell.font = { size: 24, bold: true };
+        ovalCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        worksheet.getColumn(column).width = 6;
+      }
+      worksheet.getRow(ovalRow).height = 30;
+    });
+
+    // STRIP
+    updateCell('B45', patient.idno || "");
+    updateCell('D45', billNumber);
+    updateCell('F45', fullName);
+    updateCell('H45', date);
+
+    const stripTherapyStartRow = 47;
+    
+    therapyList.forEach((therapy, index) => {
+      const nameRow = stripTherapyStartRow + (index * 3);
       const ovalRow = nameRow + 1;
       const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
@@ -310,52 +321,19 @@ const exportTherapyCashReceipt = async (req, res) => {
       const nameCell = worksheet.getCell(`B${nameRow}`);
       nameCell.font = { bold: true, size: 11 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      worksheet.getRow(nameRow).height = 18;
       
-      let ovalSymbols = "";
       for (let i = 0; i < sessions; i++) {
-        ovalSymbols += "⭕ ";
+        const column = String.fromCharCode(66 + i);
+        updateCell(`${column}${ovalRow}`, "⭕");
+        const ovalCell = worksheet.getCell(`${column}${ovalRow}`);
+        ovalCell.font = { size: 20, bold: true };
+        ovalCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        worksheet.getColumn(column).width = 5;
       }
-      
-      updateCell(`B${ovalRow}`, ovalSymbols);
-      const ovalCell = worksheet.getCell(`B${ovalRow}`);
-      ovalCell.font = { size: 14 };
-      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      worksheet.getRow(ovalRow).height = 25;
     });
 
-    // ==========================================
-    // STRIP SECTION (Bottom)
-    // ==========================================
-    
-    updateCell('B45', patient.idno || "");
-    updateCell('D45', billNumber);
-    updateCell('F45', fullName);
-    updateCell('H45', date);
-
-    // Therapy names and ovals - Strip
-    const stripTherapyStartRow = 46;
-    
-    therapyList.forEach((therapy, index) => {
-      const nameRow = stripTherapyStartRow + (index * 2);
-      const ovalRow = nameRow + 1;
-      const sessions = Math.min(Number(therapy.sessions || 1), 7);
-      
-      updateCell(`B${nameRow}`, therapy.name.toUpperCase());
-      const nameCell = worksheet.getCell(`B${nameRow}`);
-      nameCell.font = { bold: true, size: 10 };
-      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-      
-      let ovalSymbols = "";
-      for (let i = 0; i < sessions; i++) {
-        ovalSymbols += "⭕ ";
-      }
-      
-      updateCell(`B${ovalRow}`, ovalSymbols);
-      const ovalCell = worksheet.getCell(`B${ovalRow}`);
-      ovalCell.font = { size: 12 };
-      ovalCell.alignment = { horizontal: 'left', vertical: 'middle' };
-    });
-
-    // Send file
     const buffer = await workbook.xlsx.writeBuffer();
     const cleanPatientName = fullName.replace(/[^a-zA-Z0-9]/g, '_');
     const cleanBillNumber = billNumber.replace(/\//g, '_');
@@ -374,8 +352,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     console.error("Error exporting therapy cash receipt:", error);
     res.status(500).json({ 
       message: "Internal Server Error", 
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: error.message
     });
   }
 };
@@ -442,22 +419,12 @@ const exportPrakritiCashReceipt = async (req, res) => {
         approvedBy: approvalby,
       };
     } else if (purpose === "Therapy") {
-      // Push therapy discount and balance
-      lastVisit.discounts.therapies.push({
-        name: therapyName,
-        percentage: discount,
-        approvedBy: approvalby,
-      });
-
-      lastVisit.balance.therapies.push({
-        name: therapyName,
-        balance: totalAfterDiscount - receivedAmount,
-      });
-      lastVisit.therapyWithAmount.push({
-        name: therapyName,
-        receivedAmount: receivedAmount,
-      });
-    } else {
+  // ❌ Therapy receipts now use the NEW endpoint /therapy-receipt/:id
+  // This endpoint should NOT be used for therapy anymore
+  return res.status(400).json({ 
+    message: "Please use the new therapy receipt endpoint: /therapy-receipt/:id" 
+  });
+} else {
       // Others
       lastVisit.others = purpose;
       lastVisit.othersamount = totalAfterDiscount;
