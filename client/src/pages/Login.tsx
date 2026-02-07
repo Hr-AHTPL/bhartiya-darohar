@@ -44,12 +44,19 @@ function Login() {
         localStorage.setItem("userRole", role);
         localStorage.setItem("loggedInUser", name);
 
-        if (role === "doctor") {
+        // ✅ FIXED: Added admin role handling
+        if (role === "admin") {
+          console.log("✅ Admin login detected, navigating to admin dashboard");
+          navigate("/home");
+        } else if (role === "doctor") {
+          console.log("✅ Doctor login detected, navigating to doctor dashboard");
           navigate("/doctor");
         } else if (role === "receptionist") {
+          console.log("✅ Receptionist login detected, navigating to home");
           navigate("/home");
         } else {
-          handleError("Unknown role");
+          console.error("❌ Unknown role:", role);
+          handleError(`Unknown role: ${role}`);
         }
       } else if (error) {
         const details = error?.details[0].message;
