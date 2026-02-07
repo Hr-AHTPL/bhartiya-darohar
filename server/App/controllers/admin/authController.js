@@ -46,21 +46,38 @@ const signup = async (req, res) => {
   }
 };
 
-// const jwt = require('jsonwebtoken'); // ensure this is at the top
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    console.log('\n🔐 Login attempt for:', email);
+
     const user = await userModel.findOne({ email });
     if (!user) {
+      console.log('❌ User not found in database');
       return res.status(403).json({
         message: "Auth failed, email or password is wrong",
         success: false,
       });
     }
 
+    console.log('✅ User found:', {
+      email: user.email,
+      role: user.role,
+      hasPassword: !!user.password,
+      passwordLength: user.password?.length
+    });
+
+    // 🔍 Debug: Check password comparison
+    console.log('🔍 Comparing passwords...');
+    console.log('   Input password:', password);
+    console.log('   Stored hash (first 20 chars):', user.password?.substring(0, 20));
+    
     const isPassEqual = await bcrypt.compare(password, user.password);
+    console.log('   Comparison result:', isPassEqual ? '✅ MATCH' : '❌ NO MATCH');
+    
     if (!isPassEqual) {
+      console.log('❌ Password comparison failed');
       return res.status(403).json({
         message: "Auth failed, email or password is wrong",
         success: false,
@@ -73,17 +90,25 @@ const login = async (req, res) => {
       { expiresIn: "24h" }
     );
 
-    res.status(200).json({
+    // 🔍 CRITICAL DEBUG: Log the exact response being sent
+    const response = {
       message: "Login successfully",
       success: true,
       jwtToken,
       email: user.email,
       name: user.name,
-      role: user.role,
+      role: user.role,  // ⚠️ Make sure this is being sent
       _id: user._id,
-    });
+    };
+
+    console.log('\n✅ Login successful! Sending response:');
+    console.log('📤 Response Object:', JSON.stringify(response, null, 2));
+    console.log('🎭 Role being sent:', response.role);
+    console.log('📧 Email being sent:', response.email);
+
+    res.status(200).json(response);
   } catch (err) {
-    console.error("Login Error:", err);
+    console.error("❌ Login Error:", err);
     res.status(500).json({
       message: "Internal server error",
       success: false,
