@@ -5,7 +5,9 @@ const BillCounter = require('../models/billCounter.model');
  * @param {string} type - Type of transaction: 'sale', 'consultation', 'therapy', 'prakriti'
  * @returns {Promise<string>} - Bill number in format:
  *   - Sale: BD/YYYY-YY/M/NNNN (e.g., BD/2025-26/M/0001)
- *   - Others: BD/YYYY-YY/NNNN (e.g., BD/2025-26/0001)
+ *   - Consultation: BD/YYYY-YY/C/NNNN (e.g., BD/2025-26/C/0001)
+ *   - Therapy: BD/YYYY-YY/T/NNNN (e.g., BD/2025-26/T/0001)
+ *   - Prakriti: BD/YYYY-YY/P/NNNN (e.g., BD/2025-26/P/0001)
  */
 async function generateBillNumber(type) {
   const currentDate = new Date();
@@ -13,8 +15,6 @@ async function generateBillNumber(type) {
   const currentYear = currentDate.getFullYear();
   
   // Determine financial year
-  // If month is Jan-Mar (0-2), financial year started previous year
-  // If month is Apr-Dec (3-11), financial year started this year
   let financialYearStart;
   if (currentMonth <= 2) { // Jan, Feb, Mar
     financialYearStart = currentYear - 1;
@@ -23,7 +23,7 @@ async function generateBillNumber(type) {
   }
   
   const financialYearEnd = financialYearStart + 1;
-  const yearSuffix = `${financialYearStart}-${String(financialYearEnd).slice(-2)}`; // e.g., "2025-26"
+  const yearSuffix = `${financialYearStart}-${String(financialYearEnd).slice(-2)}`;
   
   // Find or create counter for current financial year
   let counter = await BillCounter.findOne({ year: financialYearStart });
@@ -38,19 +38,30 @@ async function generateBillNumber(type) {
     });
   }
   
-  // Increment the appropriate counter
+  // Increment the appropriate counter and get the letter prefix
+  let counterValue;
+  let letterPrefix;
+  
   switch(type) {
     case 'sale':
       counter.saleCounter += 1;
+      counterValue = counter.saleCounter;
+      letterPrefix = 'M'; // M for Medicine
       break;
     case 'consultation':
       counter.consultationCounter += 1;
+      counterValue = counter.consultationCounter;
+      letterPrefix = 'C'; // C for Consultation
       break;
     case 'therapy':
       counter.therapyCounter += 1;
+      counterValue = counter.therapyCounter;
+      letterPrefix = 'T'; // T for Therapy
       break;
     case 'prakriti':
       counter.prakritiCounter += 1;
+      counterValue = counter.prakritiCounter;
+      letterPrefix = 'P'; // P for Prakriti
       break;
     default:
       throw new Error(`Invalid bill type: ${type}`);
@@ -58,32 +69,8 @@ async function generateBillNumber(type) {
   
   await counter.save();
   
-  // Get the counter value for this type
-  let counterValue;
-  switch(type) {
-    case 'sale':
-      counterValue = counter.saleCounter;
-      break;
-    case 'consultation':
-      counterValue = counter.consultationCounter;
-      break;
-    case 'therapy':
-      counterValue = counter.therapyCounter;
-      break;
-    case 'prakriti':
-      counterValue = counter.prakritiCounter;
-      break;
-  }
-  
-  // Format bill number based on type
-  let billNumber;
-  if (type === 'sale') {
-    // Sale format: BD/2025-26/M/0001
-    billNumber = `BD/${yearSuffix}/M/${String(counterValue).padStart(4, '0')}`;
-  } else {
-    // Consultation, Therapy, Prakriti format: BD/2025-26/0001
-    billNumber = `BD/${yearSuffix}/${String(counterValue).padStart(4, '0')}`;
-  }
+  // Format bill number with letter prefix: BD/YYYY-YY/LETTER/NNNN
+  const billNumber = `BD/${yearSuffix}/${letterPrefix}/${String(counterValue).padStart(4, '0')}`;
   
   return billNumber;
 }
