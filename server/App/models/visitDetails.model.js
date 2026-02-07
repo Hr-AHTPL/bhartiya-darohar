@@ -3,6 +3,10 @@ const Schema = mongoose.Schema;
 
 const visitSchema = new Schema(
   {
+
+    consultationBillNumber: { type: String, sparse: true }, // ✅ NEW
+    therapyBillNumber: { type: String, sparse: true },      // ✅ NEW
+    prakritiBillNumber: { type: String, sparse: true },     // ✅ NEW
     patientId: { type: Schema.Types.ObjectId, ref: "Enquiry", required: true },
     date: { type: String, required: true },
     department: { type: String},

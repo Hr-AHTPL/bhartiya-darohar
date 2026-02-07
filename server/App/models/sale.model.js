@@ -12,6 +12,7 @@ const medicineSoldSchema = new mongoose.Schema({
 });
 
 const saleSchema = new mongoose.Schema({
+  billNumber: { type: String, unique: true, required: true }, // ✅ NEW
   patientId: { type: String, required: true },
   patientName: { type: String, required: true },
   saleDate: { type: String, required: true },
@@ -19,11 +20,8 @@ const saleSchema = new mongoose.Schema({
   subtotal: { type: Number, required: true },
   sgst: { type: Number, required: true },
   cgst: { type: Number, required: true },
-
-  // 🟠 Added discount and approval fields here
-  discount: { type: Number, default: 0 }, // in percentage (e.g., 10 for 10%)
+  discount: { type: Number, default: 0 },
   discountApprovedBy: { type: String },
-
   totalAmount: { type: Number, required: true },
 });
 
