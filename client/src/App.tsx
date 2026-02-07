@@ -20,7 +20,7 @@ import Vaidyashaala from "./pages/Vaidyashaala";
 import DoctorDashboard from "./pages/DoctorDashboard";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 
-// ✅ New: ProtectedRoute with imperative redirect
+// ✅ ProtectedRoute with debugging
 const ProtectedRoute = ({ allowedRoles, children }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -29,33 +29,52 @@ const ProtectedRoute = ({ allowedRoles, children }) => {
     const token = localStorage.getItem("token");
     const role = localStorage.getItem("userRole");
 
+    console.log('🔒 ProtectedRoute check:', { 
+      path: location.pathname,
+      hasToken: !!token, 
+      userRole: role, 
+      allowedRoles 
+    });
+
     if (!token) {
+      console.log('❌ No token, redirecting to login');
       navigate("/login", { replace: true });
     } else if (!allowedRoles.includes(role)) {
+      console.log('❌ Role not allowed. User:', role, 'Allowed:', allowedRoles);
       navigate("/unauthorized", { replace: true });
+    } else {
+      console.log('✅ Access granted for role:', role);
     }
-  }, [navigate, allowedRoles]);
+  }, [navigate, allowedRoles, location.pathname]);
 
   return children;
 };
 
-// ✅ Role-based redirect using useEffect
+// ✅ FIXED: Role-based redirect now includes admin → /home
 const RoleBasedRedirect = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
     const role = localStorage.getItem("userRole");
+    
+    console.log('🔄 RoleBasedRedirect - User role:', role);
 
-    if (role === "doctor") {
+    if (role === "admin") {
+      console.log('✅ Admin detected, redirecting to /home');
+      navigate("/home", { replace: true });
+    } else if (role === "doctor") {
+      console.log('✅ Doctor detected, redirecting to /doctor');
       navigate("/doctor", { replace: true });
     } else if (role === "receptionist") {
+      console.log('✅ Receptionist detected, redirecting to /home');
       navigate("/home", { replace: true });
     } else {
+      console.log('❌ No valid role, redirecting to login');
       navigate("/login", { replace: true });
     }
   }, [navigate]);
 
-  return null; // Just a redirect handler
+  return null;
 };
 
 const queryClient = new QueryClient();
@@ -84,11 +103,11 @@ const App = () => {
               }
             />
 
-            {/* Receptionist-only */}
+            {/* ✅✅✅ CRITICAL FIX: Added "admin" to allowedRoles ✅✅✅ */}
             <Route
               path="/home"
               element={
-                <ProtectedRoute allowedRoles={["receptionist"]}>
+                <ProtectedRoute allowedRoles={["admin", "receptionist"]}>
                   <Index />
                 </ProtectedRoute>
               }
