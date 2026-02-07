@@ -107,8 +107,8 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 // CORRECTED VERSION - Add this to patientController.js
 // This function fetches therapies from the database, not from query parameters
 
-// COMPLETE FUNCTION - Replace the entire exportTherapyCashReceipt function in patientController.js
-// This version ONLY fixes alignment - NO dimension changes
+// FIXED COMPLETE FUNCTION - Corrects the extra row issue
+// Replace the entire exportTherapyCashReceipt function in patientController.js
 
 const exportTherapyCashReceipt = async (req, res) => {
   try {
@@ -284,13 +284,15 @@ const exportTherapyCashReceipt = async (req, res) => {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
-      // If more than 5 sessions, add remaining in next row
+      // Move to next row for overflow sessions OR next therapy
+      currentRow++;
+      
+      // If more than 5 sessions, add remaining in current row
       if (sessions > 5) {
-        const nextRow = currentRow + 1;
         const remainingSessions = Math.min(sessions - 5, 2); // Max 2 more (sessions 6 & 7)
         
         for (let i = 0; i < remainingSessions; i++) {
-          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          const cellAddress = `${sessionCells[i]}${currentRow}`;
           const cell = worksheet.getCell(cellAddress);
           
           cell.value = "";
@@ -302,10 +304,10 @@ const exportTherapyCashReceipt = async (req, res) => {
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        // Move to next row after overflow
+        currentRow++;
       }
-      
-      // Move to next therapy (skip 2 rows)
-      currentRow += 2;
     });
 
     // ==========================================
@@ -360,13 +362,15 @@ const exportTherapyCashReceipt = async (req, res) => {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
+      // Move to next row
+      currentRow++;
+      
       // Handle sessions 6-7
       if (sessions > 5) {
-        const nextRow = currentRow + 1;
         const remainingSessions = Math.min(sessions - 5, 2);
         
         for (let i = 0; i < remainingSessions; i++) {
-          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          const cellAddress = `${sessionCells[i]}${currentRow}`;
           const cell = worksheet.getCell(cellAddress);
           
           cell.value = "";
@@ -378,9 +382,9 @@ const exportTherapyCashReceipt = async (req, res) => {
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        currentRow++;
       }
-      
-      currentRow += 2;
     });
 
     // ==========================================
@@ -421,13 +425,15 @@ const exportTherapyCashReceipt = async (req, res) => {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
+      // Move to next row
+      currentRow++;
+      
       // Handle sessions 6-7
       if (sessions > 5) {
-        const nextRow = currentRow + 1;
         const remainingSessions = Math.min(sessions - 5, 2);
         
         for (let i = 0; i < remainingSessions; i++) {
-          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          const cellAddress = `${sessionCells[i]}${currentRow}`;
           const cell = worksheet.getCell(cellAddress);
           
           cell.value = "";
@@ -439,9 +445,9 @@ const exportTherapyCashReceipt = async (req, res) => {
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        currentRow++;
       }
-      
-      currentRow += 2;
     });
 
     // Send file
