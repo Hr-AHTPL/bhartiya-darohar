@@ -107,7 +107,8 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 // CORRECTED VERSION - Add this to patientController.js
 // This function fetches therapies from the database, not from query parameters
 
-// CORRECTED VERSION - Replace the exportTherapyCashReceipt function in patientController.js
+// COMPLETE FUNCTION - Replace the entire exportTherapyCashReceipt function in patientController.js
+// This version ONLY fixes alignment - NO dimension changes
 
 const exportTherapyCashReceipt = async (req, res) => {
   try {
@@ -140,7 +141,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     // Limit to first 3 therapies for the receipt
     const therapyList = therapies.slice(0, 3);
 
-    // Generate Bill Number
+    // Generate Bill Number with T prefix
     const billNumber = await generateBillNumber('therapy');
 
     // Save bill number to visit record
@@ -216,15 +217,6 @@ const exportTherapyCashReceipt = async (req, res) => {
       });
     }
 
-    // ==========================================
-    // SET COLUMN WIDTHS FOR UNIFORM RECTANGLES
-    // ==========================================
-    worksheet.getColumn('D').width = 4;
-    worksheet.getColumn('E').width = 4;
-    worksheet.getColumn('F').width = 4;
-    worksheet.getColumn('G').width = 4;
-    worksheet.getColumn('H').width = 4;
-
     // Prepare data
     const date = lastVisit.date || new Date().toLocaleDateString('en-GB');
     const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
@@ -240,59 +232,8 @@ const exportTherapyCashReceipt = async (req, res) => {
       }
     };
 
-    // Helper function to create session rectangles
-    const createSessionRectangles = (startRow, therapy, sessions) => {
-      const sessionCells = ['D', 'E', 'F', 'G', 'H'];
-      
-      // Set row height for proper rectangle appearance
-      worksheet.getRow(startRow).height = 20;
-      
-      for (let i = 0; i < sessionCells.length && i < sessions; i++) {
-        const cellAddress = `${sessionCells[i]}${startRow}`;
-        const cell = worksheet.getCell(cellAddress);
-        
-        cell.value = ""; // Empty cell
-        cell.border = {
-          top: { style: 'thick', color: { argb: 'FF000000' } },
-          left: { style: 'thick', color: { argb: 'FF000000' } },
-          bottom: { style: 'thick', color: { argb: 'FF000000' } },
-          right: { style: 'thick', color: { argb: 'FF000000' } }
-        };
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFFFFFFF' } // White fill
-        };
-      }
-      
-      // If more than 5 sessions, create second row
-      if (sessions > 5) {
-        const secondRowStart = startRow + 1;
-        worksheet.getRow(secondRowStart).height = 20;
-        
-        const remainingSessions = Math.min(sessions - 5, 2); // Max 2 more (total 7)
-        for (let i = 0; i < remainingSessions; i++) {
-          const cellAddress = `${sessionCells[i]}${secondRowStart}`;
-          const cell = worksheet.getCell(cellAddress);
-          
-          cell.value = "";
-          cell.border = {
-            top: { style: 'thick', color: { argb: 'FF000000' } },
-            left: { style: 'thick', color: { argb: 'FF000000' } },
-            bottom: { style: 'thick', color: { argb: 'FF000000' } },
-            right: { style: 'thick', color: { argb: 'FF000000' } }
-          };
-          cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFFFFFFF' }
-          };
-        }
-      }
-    };
-
     // ==========================================
-    // FIRST COPY (Top Bill) - Rows 5-16
+    // FIRST COPY (Top Bill)
     // ==========================================
     
     updateCell('B5', billNumber);
@@ -315,7 +256,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('H9', balance);
 
     // Therapy names and session rectangles - First Copy
-    let currentRow = 11; // Start from row 11
+    let currentRow = 11;
     
     therapyList.forEach((therapy, index) => {
       const sessions = Math.min(Number(therapy.sessions || 1), 7);
@@ -326,15 +267,49 @@ const exportTherapyCashReceipt = async (req, res) => {
       nameCell.font = { bold: true, size: 11 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
-      // Create session rectangles
-      createSessionRectangles(currentRow, therapy, sessions);
+      // Session rectangles in columns D-H (first 5 sessions)
+      const sessionCells = ['D', 'E', 'F', 'G', 'H'];
       
-      // Move to next therapy row (skip 2 rows for current therapy)
+      for (let i = 0; i < Math.min(sessions, 5); i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        const cell = worksheet.getCell(cellAddress);
+        
+        cell.value = ""; // Empty cell
+        cell.border = {
+          top: { style: 'thick', color: { argb: 'FF000000' } },
+          left: { style: 'thick', color: { argb: 'FF000000' } },
+          bottom: { style: 'thick', color: { argb: 'FF000000' } },
+          right: { style: 'thick', color: { argb: 'FF000000' } }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+      
+      // If more than 5 sessions, add remaining in next row
+      if (sessions > 5) {
+        const nextRow = currentRow + 1;
+        const remainingSessions = Math.min(sessions - 5, 2); // Max 2 more (sessions 6 & 7)
+        
+        for (let i = 0; i < remainingSessions; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          const cell = worksheet.getCell(cellAddress);
+          
+          cell.value = "";
+          cell.border = {
+            top: { style: 'thick', color: { argb: 'FF000000' } },
+            left: { style: 'thick', color: { argb: 'FF000000' } },
+            bottom: { style: 'thick', color: { argb: 'FF000000' } },
+            right: { style: 'thick', color: { argb: 'FF000000' } }
+          };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+      }
+      
+      // Move to next therapy (skip 2 rows)
       currentRow += 2;
     });
 
     // ==========================================
-    // SECOND COPY (Middle Bill) - Rows 23-34
+    // SECOND COPY (Middle Bill)
     // ==========================================
     
     updateCell('B23', billNumber);
@@ -357,7 +332,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('H27', balance);
 
     // Therapy names and session rectangles - Second Copy
-    currentRow = 29; // Start from row 29
+    currentRow = 29;
     
     therapyList.forEach((therapy, index) => {
       const sessions = Math.min(Number(therapy.sessions || 1), 7);
@@ -368,39 +343,10 @@ const exportTherapyCashReceipt = async (req, res) => {
       nameCell.font = { bold: true, size: 11 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
-      // Create session rectangles
-      createSessionRectangles(currentRow, therapy, sessions);
-      
-      // Move to next therapy row
-      currentRow += 2;
-    });
-
-    // ==========================================
-    // STRIP SECTION (Bottom) - Rows 37-44
-    // ==========================================
-    
-    updateCell('B37', patient.idno || "");
-    updateCell('E37', fullName);
-    updateCell('H37', date);
-    updateCell('B38', billNumber);
-
-    // Therapy names and session rectangles - Strip
-    currentRow = 39; // Start from row 39
-    
-    therapyList.forEach((therapy, index) => {
-      const sessions = Math.min(Number(therapy.sessions || 1), 7);
-      
-      // Therapy name in column A
-      updateCell(`A${currentRow}`, therapy.name.toUpperCase());
-      const nameCell = worksheet.getCell(`A${currentRow}`);
-      nameCell.font = { bold: true, size: 10 };
-      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-      
-      // Create session rectangles (slightly smaller for strip)
-      worksheet.getRow(currentRow).height = 18;
+      // Session rectangles in columns D-H
       const sessionCells = ['D', 'E', 'F', 'G', 'H'];
       
-      for (let i = 0; i < sessionCells.length && i < sessions; i++) {
+      for (let i = 0; i < Math.min(sessions, 5); i++) {
         const cellAddress = `${sessionCells[i]}${currentRow}`;
         const cell = worksheet.getCell(cellAddress);
         
@@ -411,21 +357,16 @@ const exportTherapyCashReceipt = async (req, res) => {
           bottom: { style: 'thick', color: { argb: 'FF000000' } },
           right: { style: 'thick', color: { argb: 'FF000000' } }
         };
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFFFFFFF' }
-        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
-      // Handle extra sessions
+      // Handle sessions 6-7
       if (sessions > 5) {
-        const secondRowStart = currentRow + 1;
-        worksheet.getRow(secondRowStart).height = 18;
-        
+        const nextRow = currentRow + 1;
         const remainingSessions = Math.min(sessions - 5, 2);
+        
         for (let i = 0; i < remainingSessions; i++) {
-          const cellAddress = `${sessionCells[i]}${secondRowStart}`;
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
           const cell = worksheet.getCell(cellAddress);
           
           cell.value = "";
@@ -435,15 +376,71 @@ const exportTherapyCashReceipt = async (req, res) => {
             bottom: { style: 'thick', color: { argb: 'FF000000' } },
             right: { style: 'thick', color: { argb: 'FF000000' } }
           };
-          cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFFFFFFF' }
-          };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
       }
       
-      // Move to next therapy row
+      currentRow += 2;
+    });
+
+    // ==========================================
+    // STRIP SECTION (Bottom)
+    // ==========================================
+    
+    updateCell('B37', patient.idno || "");
+    updateCell('B38', billNumber);
+    updateCell('E37', fullName);
+    updateCell('H37', date);
+
+    // Therapy names and session rectangles - Strip
+    currentRow = 39;
+    
+    therapyList.forEach((therapy, index) => {
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
+      
+      // Therapy name in column A
+      updateCell(`A${currentRow}`, therapy.name.toUpperCase());
+      const nameCell = worksheet.getCell(`A${currentRow}`);
+      nameCell.font = { bold: true, size: 10 };
+      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      
+      // Session rectangles in columns D-H
+      const sessionCells = ['D', 'E', 'F', 'G', 'H'];
+      
+      for (let i = 0; i < Math.min(sessions, 5); i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        const cell = worksheet.getCell(cellAddress);
+        
+        cell.value = "";
+        cell.border = {
+          top: { style: 'thick', color: { argb: 'FF000000' } },
+          left: { style: 'thick', color: { argb: 'FF000000' } },
+          bottom: { style: 'thick', color: { argb: 'FF000000' } },
+          right: { style: 'thick', color: { argb: 'FF000000' } }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+      
+      // Handle sessions 6-7
+      if (sessions > 5) {
+        const nextRow = currentRow + 1;
+        const remainingSessions = Math.min(sessions - 5, 2);
+        
+        for (let i = 0; i < remainingSessions; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          const cell = worksheet.getCell(cellAddress);
+          
+          cell.value = "";
+          cell.border = {
+            top: { style: 'thick', color: { argb: 'FF000000' } },
+            left: { style: 'thick', color: { argb: 'FF000000' } },
+            bottom: { style: 'thick', color: { argb: 'FF000000' } },
+            right: { style: 'thick', color: { argb: 'FF000000' } }
+          };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+      }
+      
       currentRow += 2;
     });
 
@@ -466,7 +463,8 @@ const exportTherapyCashReceipt = async (req, res) => {
     console.error("Error exporting therapy cash receipt:", error);
     res.status(500).json({ 
       message: "Internal Server Error", 
-      error: error.message 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
