@@ -2,6 +2,8 @@ const medicineModel = require('../../models/medicineDetails.model');
 const saleModel = require('../../models/sale.model');
 const ExcelJS = require('exceljs');
 
+const { generateBillNumber } = require('../../utils/billNumberGenerator');
+
 const recordSale = async (req, res) => {
   try {
     const {
@@ -9,9 +11,12 @@ const recordSale = async (req, res) => {
       patientName,
       saleDate,
       medicines,
-      discount = 0, // percentage
+      discount = 0,
       discountApprovedBy = "",
     } = req.body;
+
+    // ✅ GENERATE BILL NUMBER
+    const billNumber = await generateBillNumber('sale');
 
     let subtotal = 0;
 
@@ -28,27 +33,21 @@ const recordSale = async (req, res) => {
         });
       }
 
-      // Reduce stock
       stockMed.Quantity -= med.quantity;
       await stockMed.save();
 
-      // Compute totalPrice for each medicine
       med.totalPrice = med.quantity * med.pricePerUnit;
       subtotal += med.totalPrice;
     }
 
-    // ✅ Calculate GST on subtotal (for display only)
     const sgst = subtotal * 0.025;
     const cgst = subtotal * 0.025;
-
-    // ✅ Apply discount on subtotal (discount is applied on the medicine total, not after GST)
     const discountAmount = (subtotal * discount) / 100;
     const subtotalAfterDiscount = subtotal - discountAmount;
-
-    // ✅ Total amount is rounded subtotal after discount (GST is not added)
     const totalAmount = Math.round(subtotalAfterDiscount);
 
     const sale = new saleModel({
+      billNumber,          // ✅ NEW
       patientId,
       patientName,
       saleDate,
@@ -57,8 +56,8 @@ const recordSale = async (req, res) => {
       sgst,
       cgst,
       totalAmount,
-      discount,              // ✅ storing %
-      discountApprovedBy,    // ✅ storing approver
+      discount,
+      discountApprovedBy,
     });
 
     await sale.save();
@@ -270,6 +269,7 @@ const generateSaleReport = async (req, res) => {
     worksheet.columns = [
       { key: 'saleDate', width: 12 },
       { key: 'patientId', width: 15 },
+      { key: 'billNumber', width: 18 },
       { key: 'patientName', width: 25 },
       { key: 'medicineName', width: 30 },
       { key: 'batch', width: 15 },
@@ -284,6 +284,7 @@ const generateSaleReport = async (req, res) => {
     const headerRow = worksheet.addRow([
       'Date',
       'Patient ID',
+      'Bill No.',
       'Patient Name',
       'Medicine Name',
       'Batch No.',
@@ -365,6 +366,7 @@ const generateSaleReport = async (req, res) => {
             const row = worksheet.addRow({
               saleDate: medIndex === 0 ? '' : '',
               patientId: medIndex === 0 ? sale.patientId : '',
+              billNumber: medIndex === 0 ? (sale.billNumber || 'N/A') : '',
               patientName: medIndex === 0 ? (sale.patientName || 'N/A') : '',
               medicineName: medicine.medicineName || 'Unknown',
               batch: medicine.batch || 'N/A',

@@ -10,6 +10,8 @@ const visitModel = require("../../models/visitDetails.model");
 const saleModel = require("../../models/sale.model");
 const medicineModel = require("../../models/medicineDetails.model");
 
+const { generateBillNumber } = require('../../utils/billNumberGenerator');
+
 const exportPrescriptionFormToExcel = async (req, res) => {
   try {
     const patientId = req.params.id;
@@ -982,6 +984,7 @@ const addVisit = async (req, res) => {
       balance = {},
       date,
     } = req.body;
+    
 
     if (!idno || !appointment || !date) {
       return res.status(400).json({
@@ -998,8 +1001,20 @@ const addVisit = async (req, res) => {
       });
     }
 
+    const billNumbers = {};
+
+// ✅ Use values from req.body
+if (consultationamount && consultationamount > 0) {
+  billNumbers.consultationBillNumber = await generateBillNumber('consultation');
+}
+
+if (prakritiparikshanamount && prakritiparikshanamount > 0) {
+  billNumbers.prakritiBillNumber = await generateBillNumber('prakriti');
+}
+
     const visitData = {
       patientId: patient._id,
+      ...billNumbers,
       date,
       appointment,
       consultationamount,
@@ -2269,6 +2284,7 @@ const exportPrakritiParikshanPatients = async (req, res) => {
           aadharnum: 1,
           visitDate: "$visits.date",
           prakritiparikshanamount: "$visits.prakritiparikshanamount",
+          prakritiBillNumber: "$visits.prakritiBillNumber",
         },
       },
     ]);
@@ -2289,6 +2305,7 @@ const exportPrakritiParikshanPatients = async (req, res) => {
 
     worksheet.columns = [
       { header: "ID No.", key: "idno", width: 15 },
+      { header: "Bill No.", key: "billNumber", width: 18 },
       { header: "Name", key: "name", width: 25 },
       { header: "Age", key: "age", width: 10 },
       { header: "Sex", key: "gender", width: 10 },
@@ -2319,6 +2336,7 @@ const exportPrakritiParikshanPatients = async (req, res) => {
     // Prepare rows
     const rows = filteredData.map((record) => ({
       idno: record.idno || "",
+      billNumber: record.prakritiBillNumber || "N/A",
       name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
       age: record.age || "",
       gender: record.gender || "",
@@ -2398,6 +2416,7 @@ const exportConsultationPatients = async (req, res) => {
           aadharnum: 1,
           visitDate: "$visits.date",
           consultationamount: "$visits.consultationamount",
+          consultationBillNumber: "$visits.consultationBillNumber",
         },
       },
     ]);
@@ -2418,6 +2437,7 @@ const exportConsultationPatients = async (req, res) => {
 
     worksheet.columns = [
       { header: "ID No.", key: "idno", width: 15 },
+      { header: "Bill No.", key: "billNumber", width: 18 }, 
       { header: "Name", key: "name", width: 25 },
       { header: "Age", key: "age", width: 10 },
       { header: "Sex", key: "gender", width: 10 },
@@ -2449,6 +2469,7 @@ const exportConsultationPatients = async (req, res) => {
     const rows = filteredData.map((record) => {
       const row = {
         idno: record.idno || "",
+        billNumber: record.consultationBillNumber || "N/A",
         name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
         age: record.age || "",
         gender: record.gender || "",
@@ -2806,6 +2827,7 @@ const exportTherapyReport = async (req, res) => {
           aadharnum: 1,
           visitDate: "$visits.date",
           therapyName: "$visits.therapyWithAmount.name",
+          therapyBillNumber: "$visits.therapyBillNumber",
           therapyAmount: "$visits.therapyWithAmount.receivedAmount",
         },
       },
@@ -2861,6 +2883,7 @@ const exportTherapyReport = async (req, res) => {
 
     worksheet.columns = [
       { header: "ID No.", key: "idno", width: 15 },
+      { header: "Bill No.", key: "billNumber", width: 18 },
       { header: "Name", key: "name", width: 25 },
       { header: "Age", key: "age", width: 10 },
       { header: "Sex", key: "gender", width: 10 },
@@ -2892,6 +2915,7 @@ const exportTherapyReport = async (req, res) => {
     // Add rows
     const rows = filteredRows.map((record) => ({
       idno: record.idno || "",
+      billNumber: index === 0 ? (record.therapyBillNumber || "N/A") : "",
       name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
       age: record.age || "",
       gender: record.gender || "",
