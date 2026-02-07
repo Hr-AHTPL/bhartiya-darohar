@@ -1020,15 +1020,9 @@ const addMedicineToSale = () => {
     }
   }, [newSale.patientId, enquiryList]);
 
-  const getNextInvoiceNumber = () => {
-    const lastInvoice = localStorage.getItem("lastInvoiceNumber");
-    const next = lastInvoice ? parseInt(lastInvoice) + 1 : 1001;
-    localStorage.setItem("lastInvoiceNumber", next.toString());
-    return `BD/2025-26/M/${next}`; // ✅ Return with prefix
-  };
-
   const generateExcelReceipt = async (sale) => {
-  const invoiceNumber = getNextInvoiceNumber();
+  // ✅ Use bill number from backend (already in sale object)
+  const invoiceNumber = sale.billNumber || 'DRAFT';
 
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("Sale Receipt", {
@@ -1263,7 +1257,7 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
   saveAs(blob, `Sale_Invoice_${invoiceNumber}.xlsx`);
 };
 
-  const handleRecordSale = async () => {
+const handleRecordSale = async () => {
   if (
     newSale.patientId &&
     newSale.patientName &&
@@ -1280,29 +1274,40 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
       cgst,
       totalAmount,
       saleDate: newSale.saleDate,
-      discount: newSale.discount, // ✅ Include discount
-      discountApprovedBy: newSale.discountApprovedBy, // ✅ Include approver
+      discount: newSale.discount,
+      discountApprovedBy: newSale.discountApprovedBy,
     };
 
     try {
+      // Send sale to backend
       const response = await axios.post(
         `${API_BASE_URL}/api/sale/record`,
         sale
       );
+      
+      // ✅ FIX: Use backend response which includes billNumber
+      if (response.data && response.data.sale) {
+        // Generate receipt with backend sale data (has billNumber)
+        await generateExcelReceipt(response.data.sale);
+      } else {
+        console.error("Backend response missing sale data:", response.data);
+        alert("Sale recorded but receipt generation failed.");
+      }
+      
+      // Refresh sales list
       const updatedSales = await axios.get(
         `${API_BASE_URL}/api/sale/view`
       );
       setSales(updatedSales.data.sales);
-      await generateExcelReceipt(sale);
-
+      
       // Reset form
       setNewSale({
         patientId: "",
         patientName: "",
         medicines: [],
         saleDate: new Date().toISOString().split("T")[0],
-        discount: "", // ✅ Reset
-        discountApprovedBy: "", // ✅ Reset
+        discount: "",
+        discountApprovedBy: "",
       });
       setIsRecordingSale(false);
 
