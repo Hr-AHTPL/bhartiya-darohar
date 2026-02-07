@@ -139,12 +139,14 @@ const exportTherapyCashReceipt = async (req, res) => {
     const therapyList = therapies.slice(0, 3);
 
     // Generate Bill Number
-    const billCounter = await counterModel.findOneAndUpdate(
-      { name: "bill_number_counter" },
-      { $inc: { value: 1 } },
-      { new: true, upsert: true }
-    );
-    const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
+    // ✅ Generate Bill Number with T prefix
+const billNumber = await generateBillNumber('therapy');
+
+// ✅ Save bill number to visit record
+if (!lastVisit.therapyBillNumber) {
+  lastVisit.therapyBillNumber = billNumber;
+  await lastVisit.save();
+}
 
     // Calculate totals from therapyWithAmount (amounts already paid for therapies)
     let totalFee = 0;
@@ -412,12 +414,32 @@ const exportPrakritiCashReceipt = async (req, res) => {
     }
 
     // ✅ Generate Bill Number using existing counterModel
-    const billCounter = await counterModel.findOneAndUpdate(
-      { name: "bill_number_counter" },
-      { $inc: { value: 1 } },
-      { new: true, upsert: true }
-    );
-    const billNumber = `BD/2025-26/${2000 + billCounter.value}`;
+    // ✅ Generate Bill Number based on purpose with letter prefix
+let billNumber;
+
+if (purpose === "Consultation") {
+  billNumber = await generateBillNumber('consultation');
+  
+  // Save consultation bill number
+  if (!lastVisit.consultationBillNumber) {
+    lastVisit.consultationBillNumber = billNumber;
+  }
+  
+} else if (purpose === "Prakriti Parikshan") {
+  billNumber = await generateBillNumber('prakriti');
+  
+  // Save prakriti bill number
+  if (!lastVisit.prakritiBillNumber) {
+    lastVisit.prakritiBillNumber = billNumber;
+  }
+  
+} else {
+  return res.status(400).json({ 
+    message: "Invalid purpose. Must be 'Consultation' or 'Prakriti Parikshan'" 
+  });
+}
+
+// Note: The visit will be saved later in the function where you have: await lastVisit.save();
 
     const numericFee = Number(feeAmount);
     const numericReceived = Number(receivedAmount);
