@@ -76,11 +76,17 @@ interface Sale {
   saleDate: string;
 }
 
+//import { Edit, Trash2 } from "lucide-react";
+
+
+
 const MedicineInventory = () => {
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
+
+  const [userRole, setUserRole] = useState<string>('');
   // ✅ ADD THIS STATE
   const [purchases, setPurchases] = useState<any[]>([]);
   useEffect(() => {
@@ -212,6 +218,12 @@ const [editCurrentMedicine, setEditCurrentMedicine] = useState({
     );
   });
 
+  
+// 4. ADD THESE HELPER FUNCTIONS (after your state declarations, before other functions)
+const isAdmin = () => userRole === 'admin';
+const canDelete = () => isAdmin();
+const canEdit = () => ['admin', 'receptionist', 'doctor'].includes(userRole);
+
   const totalPages = Math.ceil(filteredMedicines.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
@@ -301,6 +313,12 @@ const handleEditSuggestionClick = (med: any) => {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm]);
+
+  useEffect(() => {
+  const role = localStorage.getItem('userRole');
+  setUserRole(role || '');
+  console.log('User role loaded:', role);
+}, []);
 
   const getPageNumbers = () => {
     const pages = [];
@@ -503,113 +521,153 @@ const updateMedicinePriceInEdit = (medicineId: string, newPrice: number) => {
 
 
 // Delete Sale Handler
+
+// 5. REPLACE YOUR handleDeleteSale FUNCTION WITH THIS:
 const handleDeleteSale = async (saleId: string) => {
-  if (!confirm("Are you sure you want to delete this sale? The stock will be restored to inventory.")) {
+  // Check admin permission
+  if (!canDelete()) {
+    alert('Only administrators can delete sales records.');
+    return;
+  }
+
+  if (!confirm('Are you sure you want to delete this sale? This will restore the medicine stock.')) {
     return;
   }
 
   try {
-    const response = await axios.delete(`${API_BASE_URL}/api/sale/${saleId}`);
-    
-    if (response.status === 200) {
-      alert("Sale deleted successfully! Stock has been restored.");
-      
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_BASE_URL}/api/sale/${saleId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': token || '',
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      alert('Sale deleted successfully');
       // Refresh sales list
       const salesResponse = await fetch(`${API_BASE_URL}/api/sale/view`);
-      const data = await salesResponse.json();
-      if (data.success) {
-        setSales(data.sales);
+      const salesData = await salesResponse.json();
+      if (salesData.success) {
+        setSales(salesData.sales);
       }
-      
-      // Refresh medicine inventory
+      // Refresh medicines list
       fetchMedicines();
+    } else {
+      alert(result.message || 'Failed to delete sale');
     }
-  } catch (error: any) {
-    console.error("Error deleting sale:", error);
-    alert("Failed to delete sale: " + (error.response?.data?.message || error.message));
+  } catch (error) {
+    console.error('Error deleting sale:', error);
+    alert('Error deleting sale');
   }
 };
 
 // Edit Sale Handler
+
+// 6. UPDATE YOUR handleEditSale FUNCTION (add permission check at the start):
 const handleEditSale = async (saleId: string) => {
+  // Check edit permission
+  if (!canEdit()) {
+    alert('You do not have permission to edit sales records.');
+    return;
+  }
+
   try {
-    const response = await axios.get(`${API_BASE_URL}/api/sale/${saleId}`);
-    
-    if (response.data.success) {
-      const sale = response.data.sale;
-      setEditingSaleId(sale._id);
+    const response = await fetch(`${API_BASE_URL}/api/sale/${saleId}`);
+    const result = await response.json();
+
+    if (result.success) {
+      const sale = result.sale;
       setEditSale({
         patientId: sale.patientId,
         patientName: sale.patientName,
         medicines: sale.medicines,
         saleDate: sale.saleDate,
-        discount: sale.discount?.toString() || "",
-        discountApprovedBy: sale.discountApprovedBy || "",
+        discount: sale.discount?.toString() || '',
+        discountApprovedBy: sale.discountApprovedBy || '',
       });
+      setEditingSaleId(saleId);
       setIsEditingSale(true);
+    } else {
+      alert('Failed to fetch sale details');
     }
-  } catch (error: any) {
-    console.error("Error fetching sale:", error);
-    alert("Failed to load sale details: " + (error.response?.data?.message || error.message));
+  } catch (error) {
+    console.error('Error fetching sale:', error);
+    alert('Error fetching sale details');
   }
 };
 
 // Update Sale Handler
+
+// 7. UPDATE YOUR handleUpdateSale FUNCTION (add Authorization header):
 const handleUpdateSale = async () => {
   if (!editSale.patientId || !editSale.patientName || editSale.medicines.length === 0) {
-    alert("Please fill in all required fields and add at least one medicine.");
+    alert('Please fill all required fields and add at least one medicine');
     return;
   }
 
   try {
-    const response = await axios.put(
-      `${API_BASE_URL}/api/sale/${editingSaleId}`,
-      {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_BASE_URL}/api/sale/${editingSaleId}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': token || '',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         patientId: editSale.patientId,
         patientName: editSale.patientName,
         saleDate: editSale.saleDate,
         medicines: editSale.medicines,
-        discount: parseFloat(editSale.discount) || 0,
+        discount: editSale.discount ? parseFloat(editSale.discount) : 0,
         discountApprovedBy: editSale.discountApprovedBy,
-      }
-    );
+      }),
+    });
 
-    if (response.status === 200) {
-      alert("Sale updated successfully!");
+    const result = await response.json();
+
+    if (response.ok) {
+      alert('Sale updated successfully');
       setIsEditingSale(false);
       setEditingSaleId(null);
       setEditSale({
-        patientId: "",
-        patientName: "",
+        patientId: '',
+        patientName: '',
         medicines: [],
-        saleDate: "",
-        discount: "",
-        discountApprovedBy: "",
+        saleDate: '',
+        discount: '',
+        discountApprovedBy: '',
       });
       setEditCurrentMedicine({
-        medicineName: "",
-        batch: "",
-        hsn: "",
-        expiry: "",
-        pricePerUnit: "",
-        quantity: "",
+        medicineName: '',
+        batch: '',
+        hsn: '',
+        expiry: '',
+        pricePerUnit: '',
+        quantity: '',
       });
       
       // Refresh sales list
       const salesResponse = await fetch(`${API_BASE_URL}/api/sale/view`);
-      const data = await salesResponse.json();
-      if (data.success) {
-        setSales(data.sales);
+      const salesData = await salesResponse.json();
+      if (salesData.success) {
+        setSales(salesData.sales);
       }
       
-      // Refresh medicine inventory
+      // Refresh medicines
       fetchMedicines();
+    } else {
+      alert(result.message || 'Failed to update sale');
     }
-  } catch (error: any) {
-    console.error("Error updating sale:", error);
-    alert("Failed to update sale: " + (error.response?.data?.message || error.message));
+  } catch (error) {
+    console.error('Error updating sale:', error);
+    alert('Error updating sale');
   }
 };
+
 
 // Add Medicine to Edit Sale
 const addMedicineToEditSale = () => {
@@ -1883,28 +1941,43 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
       ₹{sale.totalAmount?.toFixed(2) || '0.00'}
     </TableCell>
     <TableCell>{sale.saleDate}</TableCell>
-    <TableCell>
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleEditSale(sale._id)}
-          className="text-blue-600 border-blue-300 hover:bg-blue-50"
-          title="Edit Sale"
-        >
-          <Edit className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleDeleteSale(sale._id)}
-          className="text-red-600 border-red-300 hover:bg-red-50"
-          title="Delete Sale"
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
-    </TableCell>
+    
+<TableCell>
+  <div className="flex space-x-2 justify-center">
+    {/* Edit button - visible to users with edit permission */}
+    {canEdit() && (
+      <Button
+        onClick={() => handleEditSale(sale._id)}
+        variant="outline"
+        size="sm"
+        className="border-blue-300 text-blue-600 hover:bg-blue-50 transition-colors"
+        title="Edit Sale"
+      >
+        <Edit className="h-4 w-4" />
+      </Button>
+    )}
+    
+    {/* Delete button - visible only to admins */}
+    {canDelete() && (
+      <Button
+        onClick={() => handleDeleteSale(sale._id)}
+        variant="outline"
+        size="sm"
+        className="border-red-300 text-red-600 hover:bg-red-50 transition-colors"
+        title="Delete Sale (Admin Only)"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    )}
+    
+    {/* Show message if no permissions */}
+    {!canEdit() && !canDelete() && (
+      <span className="text-xs text-gray-400 italic px-2 py-1 bg-gray-50 rounded">
+        No access
+      </span>
+    )}
+  </div>
+</TableCell>
   </TableRow>
 ))
                       )}
