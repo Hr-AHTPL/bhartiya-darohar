@@ -142,13 +142,19 @@ const exportTherapyCashReceipt = async (req, res) => {
     const therapyList = therapies.slice(0, 3);
 
     // Generate Bill Number with T prefix
-    const billNumber = await generateBillNumber('therapy');
+    let billNumber;
+if (lastVisit.therapyBillNumber) {
+  billNumber = lastVisit.therapyBillNumber;
+  console.log(`♻️ Reusing therapy bill: ${billNumber}`);
+} else {
+  billNumber = await generateBillNumber('therapy');
+  lastVisit.therapyBillNumber = billNumber;
+  console.log(`✨ New therapy bill: ${billNumber}`);
+}
 
-    // Save bill number to visit record
-    if (!lastVisit.therapyBillNumber) {
-      lastVisit.therapyBillNumber = billNumber;
-      await lastVisit.save();
-    }
+console.log(`💾 Saving therapy visit`);
+await lastVisit.save();
+console.log(`✅ Saved: ${lastVisit._id}`);
 
     // Calculate totals from therapyWithAmount (amounts already paid for therapies)
     let totalFee = 0;
@@ -473,6 +479,11 @@ const exportTherapyCashReceipt = async (req, res) => {
 // Don't forget to add this to module.exports at the bottom of patientController.js
 
 
+// ===================================================================
+// CORRECTED exportPrakritiCashReceipt Function
+// Replace this entire function in patientController.js (starts around line 482)
+// ===================================================================
+
 const exportPrakritiCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
@@ -498,79 +509,61 @@ const exportPrakritiCashReceipt = async (req, res) => {
       return res.status(404).json({ message: "No last visit found" });
     }
 
-    // ✅ Generate Bill Number using existing counterModel
-    // ✅ Generate Bill Number based on purpose with letter prefix
-let billNumber;
+    // ✅ FIX 1: ALWAYS Generate NEW Bill Number for EACH receipt
+    // Don't reuse existing bill numbers - each receipt should be unique
+    let billNumber;
 
-if (purpose === "Consultation") {
-  billNumber = await generateBillNumber('consultation');
-  
-  // Save consultation bill number
-  if (!lastVisit.consultationBillNumber) {
-    lastVisit.consultationBillNumber = billNumber;
-  }
-  
-} else if (purpose === "Prakriti Parikshan") {
-  billNumber = await generateBillNumber('prakriti');
-  
-  // Save prakriti bill number
-  if (!lastVisit.prakritiBillNumber) {
-    lastVisit.prakritiBillNumber = billNumber;
-  }
-  
-} else {
-  return res.status(400).json({ 
-    message: "Invalid purpose. Must be 'Consultation' or 'Prakriti Parikshan'" 
-  });
-}
-
-// Note: The visit will be saved later in the function where you have: await lastVisit.save();
-
-    const numericFee = Number(feeAmount);
-    const numericReceived = Number(receivedAmount);
-    const numericDiscount = Number(discount);
-    const totalAfterDiscount =
-      numericFee - (numericFee * numericDiscount) / 100;
-    const balance = totalAfterDiscount - numericReceived;
-
-    // === Update visit fields based on purpose ===
     if (purpose === "Consultation") {
-      lastVisit.consultationamount = receivedAmount;
-      lastVisit.balance.consultation = totalAfterDiscount - receivedAmount;
-
-      lastVisit.discounts.consultation = {
-        percentage: discount,
-        approvedBy: approvalby,
-      };
+      billNumber = await generateBillNumber('consultation');
+      lastVisit.consultationBillNumber = billNumber;
+      console.log(`✨ Generated NEW consultation bill: ${billNumber}`);
+      
     } else if (purpose === "Prakriti Parikshan") {
-      lastVisit.prakritiparikshanamount = receivedAmount;
-      lastVisit.balance.prakritiparikshan = totalAfterDiscount - receivedAmount;
-
-      lastVisit.discounts.prakritiparikshan = {
-        percentage: discount,
-        approvedBy: approvalby,
-      };
-    } else if (purpose === "Therapy") {
-  return res.status(400).json({ 
-    message: "Please use the new therapy receipt endpoint" 
-  });
-} else {
-      // Others
-      lastVisit.others = purpose;
-      lastVisit.othersamount = totalAfterDiscount;
-
-      lastVisit.discounts.others = {
-        percentage: discount,
-        approvedBy: approvalby,
-      };
-
-      lastVisit.balance.others.push({
-        purpose,
-        balance: totalAfterDiscount - receivedAmount,
+      billNumber = await generateBillNumber('prakriti');
+      lastVisit.prakritiBillNumber = billNumber;
+      console.log(`✨ Generated NEW prakriti bill: ${billNumber}`);
+      
+    } else {
+      return res.status(400).json({ 
+        message: "Invalid purpose. Must be 'Consultation' or 'Prakriti Parikshan'" 
       });
     }
 
+    console.log(`📝 Bill Number: ${billNumber} for ${purpose}`);
+
+    // ✅ FIX 2: Calculate amounts properly
+    const numericFee = Number(feeAmount);
+    const numericReceived = Number(receivedAmount);
+    const numericDiscount = Number(discount);
+    const totalAfterDiscount = numericFee - (numericFee * numericDiscount) / 100;
+    const balance = totalAfterDiscount - numericReceived;
+
+    // ✅ FIX 3: Update visit fields based on purpose with proper logging
+    if (purpose === "Consultation") {
+      lastVisit.consultationamount = numericFee;
+      lastVisit.balance.consultation = balance;
+      lastVisit.discounts.consultation = {
+        percentage: numericDiscount,
+        approvedBy: approvalby,
+      };
+      
+      console.log(`💰 Consultation - Fee: ₹${numericFee}, Discount: ${numericDiscount}%, Received: ₹${numericReceived}, Balance: ₹${balance}`);
+      
+    } else if (purpose === "Prakriti Parikshan") {
+      lastVisit.prakritiparikshanamount = numericFee;
+      lastVisit.balance.prakritiparikshan = balance;
+      lastVisit.discounts.prakritiparikshan = {
+        percentage: numericDiscount,
+        approvedBy: approvalby,
+      };
+      
+      console.log(`💰 Prakriti - Fee: ₹${numericFee}, Discount: ${numericDiscount}%, Received: ₹${numericReceived}, Balance: ₹${balance}`);
+    }
+
+    // ✅ FIX 4: SAVE visit BEFORE generating Excel (critical!)
+    console.log(`💾 Saving ${purpose} visit with bill number: ${billNumber}`);
     await lastVisit.save();
+    console.log(`✅ Visit saved successfully - ID: ${lastVisit._id}`);
 
     // Load Excel Template
     const templatePath = path.join(
@@ -675,18 +668,30 @@ if (purpose === "Consultation") {
 
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.setHeader(
-    "Content-Type",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  );
-  res.send(buffer);
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.send(buffer);
+    
+    console.log(`📥 Receipt downloaded: ${fileName}`);
+    
   } catch (error) {
-    console.error("Error exporting cash receipt:", error);
+    console.error("❌ Error exporting cash receipt:", error);
     res
       .status(500)
       .json({ message: "Internal Server Error", error: error.message });
   }
 };
 
+// ===================================================================
+// Key Changes Made:
+// ===================================================================
+// 1. REMOVED the bill number reuse logic (if lastVisit.consultationBillNumber)
+// 2. ALWAYS generate new bill numbers for each receipt
+// 3. Added comprehensive console logging for debugging
+// 4. Ensured visit.save() happens BEFORE Excel generation
+// 5. Added detailed logging of amounts, discounts, and balances
+// ===================================================================
 const prescriptionDone = async (req, res) => {
   const {
     visitId,
@@ -1108,15 +1113,19 @@ const addVisit = async (req, res) => {
       });
     }
 
-    const billNumbers = {};
+   const billNumbers = {};
 
-// ✅ Use values from req.body
+// ✅ FIXED: Generate bill numbers with logging
 if (consultationamount && consultationamount > 0) {
-  billNumbers.consultationBillNumber = await generateBillNumber('consultation');
+  const billNumber = await generateBillNumber('consultation');
+  billNumbers.consultationBillNumber = billNumber;
+  console.log(`✅ Generated consultation bill: ${billNumber}`);
 }
 
 if (prakritiparikshanamount && prakritiparikshanamount > 0) {
-  billNumbers.prakritiBillNumber = await generateBillNumber('prakriti');
+  const billNumber = await generateBillNumber('prakriti');
+  billNumbers.prakritiBillNumber = billNumber;
+  console.log(`✅ Generated prakriti bill: ${billNumber}`);
 }
 
     const visitData = {
@@ -1163,14 +1172,18 @@ if (prakritiparikshanamount && prakritiparikshanamount > 0) {
     if (department) visitData.department = department;
     if (sponsor) visitData.sponsor = sponsor;
 
-    const newVisit = new visitModel(visitData);
+   const newVisit = new visitModel(visitData);
+    
+    console.log(`💾 Saving Consultation - Bill: ${billNumbers.consultationBillNumber || 'None'}`);
     await newVisit.save();
+    console.log(`✅ Saved visit: ${newVisit._id}`);
 
     return res.status(200).json({
       status: 1,
       message: "Visit added successfully",
       visitId: newVisit._id,
       patientId: patient._id,
+      billNumbers: billNumbers, // ✅ ADD THIS LINE
     });
   } catch (err) {
     return res.status(500).json({
