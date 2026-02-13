@@ -110,6 +110,11 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 // COMPLETE FUNCTION - Replace the entire exportTherapyCashReceipt function in patientController.js
 // This version ONLY fixes alignment - NO dimension changes
 
+// ==========================================
+// FIXED VERSION - Replace exportTherapyCashReceipt in patientController.js
+// This version ONLY creates session boxes for therapies that actually exist
+// ==========================================
+
 const exportTherapyCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
@@ -143,18 +148,18 @@ const exportTherapyCashReceipt = async (req, res) => {
 
     // Generate Bill Number with T prefix
     let billNumber;
-if (lastVisit.therapyBillNumber) {
-  billNumber = lastVisit.therapyBillNumber;
-  console.log(`♻️ Reusing therapy bill: ${billNumber}`);
-} else {
-  billNumber = await generateBillNumber('therapy');
-  lastVisit.therapyBillNumber = billNumber;
-  console.log(`✨ New therapy bill: ${billNumber}`);
-}
+    if (lastVisit.therapyBillNumber) {
+      billNumber = lastVisit.therapyBillNumber;
+      console.log(`♻️ Reusing therapy bill: ${billNumber}`);
+    } else {
+      billNumber = await generateBillNumber('therapy');
+      lastVisit.therapyBillNumber = billNumber;
+      console.log(`✨ New therapy bill: ${billNumber}`);
+    }
 
-console.log(`💾 Saving therapy visit`);
-await lastVisit.save();
-console.log(`✅ Saved: ${lastVisit._id}`);
+    console.log(`💾 Saving therapy visit`);
+    await lastVisit.save();
+    console.log(`✅ Saved: ${lastVisit._id}`);
 
     // Calculate totals from therapyWithAmount (amounts already paid for therapies)
     let totalFee = 0;
@@ -238,6 +243,51 @@ console.log(`✅ Saved: ${lastVisit._id}`);
       }
     };
 
+    // ✅ NEW: Helper function to clear borders from a cell
+    const clearBorders = (cellAddress) => {
+      try {
+        const cell = worksheet.getCell(cellAddress);
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
+        };
+      } catch (error) {
+        console.error(`Error clearing borders ${cellAddress}:`, error.message);
+      }
+    };
+
+    // ✅ NEW: Helper function to clear therapy rows that aren't being used
+    const clearUnusedTherapyRows = (startRow, therapyCount) => {
+      // Clear rows for therapies that don't exist
+      // Each therapy takes 2 rows, so clear based on how many therapies we have
+      const maxTherapies = 3;
+      const usedRows = therapyCount * 2;
+      const totalPossibleRows = maxTherapies * 2; // 6 rows total
+      
+      // Calculate which rows need to be cleared
+      const rowsToClear = totalPossibleRows - usedRows;
+      const clearStartRow = startRow + usedRows;
+      
+      for (let rowOffset = 0; rowOffset < rowsToClear; rowOffset++) {
+        const currentRowNum = clearStartRow + rowOffset;
+        
+        // Clear therapy name in column A
+        updateCell(`A${currentRowNum}`, "");
+        const nameCell = worksheet.getCell(`A${currentRowNum}`);
+        nameCell.font = { bold: false, size: 11 };
+        
+        // Clear session cells in columns D-H
+        const sessionCells = ['D', 'E', 'F', 'G', 'H'];
+        for (const col of sessionCells) {
+          const cellAddress = `${col}${currentRowNum}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      }
+    };
+
     // ==========================================
     // FIRST COPY (Top Bill)
     // ==========================================
@@ -261,7 +311,7 @@ console.log(`✅ Saved: ${lastVisit._id}`);
     updateCell('E9', totalReceived);
     updateCell('H9', balance);
 
-    // Therapy names and session rectangles - First Copy
+    // ✅ FIXED: Therapy names and session rectangles - First Copy
     let currentRow = 11;
     
     therapyList.forEach((therapy, index) => {
@@ -290,6 +340,13 @@ console.log(`✅ Saved: ${lastVisit._id}`);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
+      // ✅ FIXED: Clear remaining session cells in first row if less than 5 sessions
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
       // If more than 5 sessions, add remaining in next row
       if (sessions > 5) {
         const nextRow = currentRow + 1;
@@ -308,11 +365,29 @@ console.log(`✅ Saved: ${lastVisit._id}`);
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        // ✅ FIXED: Clear remaining cells in second row
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        // ✅ FIXED: Clear ALL cells in second row if 5 or fewer sessions
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
       }
       
       // Move to next therapy (skip 2 rows)
       currentRow += 2;
     });
+    
+    // ✅ FIXED: Clear unused therapy rows
+    clearUnusedTherapyRows(11, therapyList.length);
 
     // ==========================================
     // SECOND COPY (Middle Bill)
@@ -337,7 +412,7 @@ console.log(`✅ Saved: ${lastVisit._id}`);
     updateCell('E27', totalReceived);
     updateCell('H27', balance);
 
-    // Therapy names and session rectangles - Second Copy
+    // ✅ FIXED: Therapy names and session rectangles - Second Copy
     currentRow = 29;
     
     therapyList.forEach((therapy, index) => {
@@ -366,6 +441,13 @@ console.log(`✅ Saved: ${lastVisit._id}`);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
+      // ✅ FIXED: Clear remaining session cells in first row
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
       // Handle sessions 6-7
       if (sessions > 5) {
         const nextRow = currentRow + 1;
@@ -384,10 +466,28 @@ console.log(`✅ Saved: ${lastVisit._id}`);
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        // ✅ FIXED: Clear remaining cells in second row
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        // ✅ FIXED: Clear ALL cells in second row if 5 or fewer sessions
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
       }
       
       currentRow += 2;
     });
+    
+    // ✅ FIXED: Clear unused therapy rows
+    clearUnusedTherapyRows(29, therapyList.length);
 
     // ==========================================
     // STRIP SECTION (Bottom)
@@ -398,7 +498,7 @@ console.log(`✅ Saved: ${lastVisit._id}`);
     updateCell('E37', fullName);
     updateCell('H37', date);
 
-    // Therapy names and session rectangles - Strip
+    // ✅ FIXED: Therapy names and session rectangles - Strip
     currentRow = 39;
     
     therapyList.forEach((therapy, index) => {
@@ -427,6 +527,13 @@ console.log(`✅ Saved: ${lastVisit._id}`);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
+      // ✅ FIXED: Clear remaining session cells in first row
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
       // Handle sessions 6-7
       if (sessions > 5) {
         const nextRow = currentRow + 1;
@@ -445,10 +552,28 @@ console.log(`✅ Saved: ${lastVisit._id}`);
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        // ✅ FIXED: Clear remaining cells in second row
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        // ✅ FIXED: Clear ALL cells in second row if 5 or fewer sessions
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
       }
       
       currentRow += 2;
     });
+    
+    // ✅ FIXED: Clear unused therapy rows
+    clearUnusedTherapyRows(39, therapyList.length);
 
     // Send file
     const buffer = await workbook.xlsx.writeBuffer();
