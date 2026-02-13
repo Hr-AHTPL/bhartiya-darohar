@@ -775,9 +775,14 @@ const calculateTotalTherapyAmount = () => {
   };
 
   const handleReappointmentClick = (patient: Patient) => {
-    setSelectedPatient(patient);
-    setShowReappointmentDialog(true);
-  };
+  setSelectedPatient(patient);
+  
+  // ✅ ALWAYS set visit date to TODAY when opening dialog
+  const today = new Date().toISOString().split("T")[0];
+  setVisitDate(today);
+  
+  setShowReappointmentDialog(true);
+};
   const formatDateToDDMMYYYY = (dateString: string) => {
     if (!dateString) return "";
     const date = new Date(dateString);
