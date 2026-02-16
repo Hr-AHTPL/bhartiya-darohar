@@ -319,22 +319,27 @@ const exportTherapyCashReceipt = async (req, res) => {
       }
     };
 
-    // Helper function to hide unused therapy rows
-    // Each therapy slot occupies exactly 2 rows in the template.
-    // We hide the rows for unused slots so the pre-drawn bold borders
-    // on used slots stay intact exactly as designed in the template.
-    const hideUnusedTherapySlots = (sectionStartRow, therapyCount) => {
-      for (let slot = therapyCount; slot < 3; slot++) {
-        const slotStartRow = sectionStartRow + slot * 2;
-        try {
-          const row1 = worksheet.getRow(slotStartRow);
-          row1.height = 0;
-          row1.hidden = true;
-          const row2 = worksheet.getRow(slotStartRow + 1);
-          row2.height = 0;
-          row2.hidden = true;
-        } catch (error) {
-          console.error(`Error hiding therapy slot rows ${slotStartRow}-${slotStartRow + 1}:`, error.message);
+    // Helper function to clear unused therapy rows
+    const clearUnusedTherapyRows = (startRow, therapyCount) => {
+      const maxTherapies = 3;
+      const usedRows = therapyCount * 2;
+      const totalPossibleRows = maxTherapies * 2;
+      
+      const rowsToClear = totalPossibleRows - usedRows;
+      const clearStartRow = startRow + usedRows;
+      
+      for (let rowOffset = 0; rowOffset < rowsToClear; rowOffset++) {
+        const currentRowNum = clearStartRow + rowOffset;
+        
+        updateCell(`A${currentRowNum}`, "");
+        const nameCell = worksheet.getCell(`A${currentRowNum}`);
+        nameCell.font = { bold: false, size: 11 };
+        
+        const sessionCells = ['D', 'E', 'F', 'G', 'H'];
+        for (const col of sessionCells) {
+          const cellAddress = `${col}${currentRowNum}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
         }
       }
     };
@@ -431,7 +436,6 @@ const exportTherapyCashReceipt = async (req, res) => {
     });
     
     clearUnusedTherapyRows(11, therapyList.length);
-    hideUnusedTherapySlots(11, therapyList.length);
 
     // ==========================================
     // SECOND COPY (Middle Bill)
@@ -524,16 +528,15 @@ const exportTherapyCashReceipt = async (req, res) => {
     });
     
     clearUnusedTherapyRows(29, therapyList.length);
-    hideUnusedTherapySlots(29, therapyList.length);
 
     // ==========================================
     // STRIP SECTION (Bottom)
     // ==========================================
     
-    updateCell('B36', patient.idno || "");
-    updateCell('B37', billNumber);
-    updateCell('E36', fullName);
-    updateCell('H36', date);
+    updateCell('B37', patient.idno || "");
+    updateCell('B38', billNumber);
+    updateCell('E37', fullName);
+    updateCell('H37', date);
 
     currentRow = 39;
     
@@ -603,7 +606,6 @@ const exportTherapyCashReceipt = async (req, res) => {
     });
     
     clearUnusedTherapyRows(39, therapyList.length);
-    hideUnusedTherapySlots(38, therapyList.length);
 
     // Send file
     const buffer = await workbook.xlsx.writeBuffer();
