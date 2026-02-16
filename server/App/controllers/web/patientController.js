@@ -350,17 +350,22 @@ const exportTherapyCashReceipt = async (req, res) => {
       }
     };
 
-    // Hide the 2 rows of each unused therapy slot so only active slots show.
+    // Hide unused therapy slot rows so only the slots that have a therapy
+    // are visible. Each therapy occupies exactly 2 rows in the template.
+    // The template has pre-drawn bold borders for all 3 slots — hiding the
+    // rows of unused slots makes those borders invisible without touching them.
     const hideUnusedTherapySlots = (sectionStartRow, therapyCount) => {
       for (let slot = therapyCount; slot < 3; slot++) {
         const slotStartRow = sectionStartRow + slot * 2;
         try {
-          const r1 = worksheet.getRow(slotStartRow);
-          r1.height = 0; r1.hidden = true;
-          const r2 = worksheet.getRow(slotStartRow + 1);
-          r2.height = 0; r2.hidden = true;
-        } catch (err) {
-          console.error(`Error hiding rows ${slotStartRow}-${slotStartRow+1}:`, err.message);
+          const row1 = worksheet.getRow(slotStartRow);
+          row1.height = 0;
+          row1.hidden = true;
+          const row2 = worksheet.getRow(slotStartRow + 1);
+          row2.height = 0;
+          row2.hidden = true;
+        } catch (error) {
+          console.error(`Error hiding therapy slot rows ${slotStartRow}-${slotStartRow + 1}:`, error.message);
         }
       }
     };
@@ -388,34 +393,74 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('E9', totalReceived);
     updateCell('H9', balance);
 
-    // Therapy session boxes — Copy 1
-    // Template: each slot has 2 rows × 5 cols (D-H) of bold tick boxes.
-    // ALL 10 cells are always drawn bold for every used therapy slot.
+    // Therapy names and session rectangles - First Copy
     let currentRow = 11;
-    therapyList.forEach((therapy) => {
-      // Write therapy name (row 1 of slot)
+    
+    therapyList.forEach((therapy, index) => {
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
+      
       updateCell(`A${currentRow}`, therapy.name.toUpperCase());
       const nameCell = worksheet.getCell(`A${currentRow}`);
       nameCell.font = { bold: true, size: 11 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-
-      const boldBorder = {
-        top:    { style: 'thick', color: { argb: 'FF000000' } },
-        left:   { style: 'thick', color: { argb: 'FF000000' } },
-        bottom: { style: 'thick', color: { argb: 'FF000000' } },
-        right:  { style: 'thick', color: { argb: 'FF000000' } }
-      };
-      // Draw bold borders on both rows (row 1 and row 2) for all 5 columns D-H
-      ['D','E','F','G','H'].forEach(col => {
-        [currentRow, currentRow + 1].forEach(r => {
-          const cell = worksheet.getCell(`${col}${r}`);
-          cell.value = '';
-          cell.border = boldBorder;
+      
+      const sessionCells = ['D', 'E', 'F', 'G', 'H'];
+      
+      for (let i = 0; i < Math.min(sessions, 5); i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        const cell = worksheet.getCell(cellAddress);
+        
+        cell.value = "";
+        cell.border = {
+          top: { style: 'thick', color: { argb: 'FF000000' } },
+          left: { style: 'thick', color: { argb: 'FF000000' } },
+          bottom: { style: 'thick', color: { argb: 'FF000000' } },
+          right: { style: 'thick', color: { argb: 'FF000000' } }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+      
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
+      if (sessions > 5) {
+        const nextRow = currentRow + 1;
+        const remainingSessions = Math.min(sessions - 5, 2);
+        
+        for (let i = 0; i < remainingSessions; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          const cell = worksheet.getCell(cellAddress);
+          
+          cell.value = "";
+          cell.border = {
+            top: { style: 'thick', color: { argb: 'FF000000' } },
+            left: { style: 'thick', color: { argb: 'FF000000' } },
+            bottom: { style: 'thick', color: { argb: 'FF000000' } },
+            right: { style: 'thick', color: { argb: 'FF000000' } }
+          };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        });
-      });
+        }
+        
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      }
+      
       currentRow += 2;
     });
+    
     clearUnusedTherapyRows(11, therapyList.length);
     hideUnusedTherapySlots(11, therapyList.length);
 
@@ -442,30 +487,73 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('E27', totalReceived);
     updateCell('H27', balance);
 
-    // Therapy session boxes — Copy 2
-    let currentRow = 29;
-    therapyList.forEach((therapy) => {
+    currentRow = 29;
+    
+    therapyList.forEach((therapy, index) => {
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
+      
       updateCell(`A${currentRow}`, therapy.name.toUpperCase());
       const nameCell = worksheet.getCell(`A${currentRow}`);
       nameCell.font = { bold: true, size: 11 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-
-      const boldBorder = {
-        top:    { style: 'thick', color: { argb: 'FF000000' } },
-        left:   { style: 'thick', color: { argb: 'FF000000' } },
-        bottom: { style: 'thick', color: { argb: 'FF000000' } },
-        right:  { style: 'thick', color: { argb: 'FF000000' } }
-      };
-      ['D','E','F','G','H'].forEach(col => {
-        [currentRow, currentRow + 1].forEach(r => {
-          const cell = worksheet.getCell(`${col}${r}`);
-          cell.value = '';
-          cell.border = boldBorder;
+      
+      const sessionCells = ['D', 'E', 'F', 'G', 'H'];
+      
+      for (let i = 0; i < Math.min(sessions, 5); i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        const cell = worksheet.getCell(cellAddress);
+        
+        cell.value = "";
+        cell.border = {
+          top: { style: 'thick', color: { argb: 'FF000000' } },
+          left: { style: 'thick', color: { argb: 'FF000000' } },
+          bottom: { style: 'thick', color: { argb: 'FF000000' } },
+          right: { style: 'thick', color: { argb: 'FF000000' } }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+      
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
+      if (sessions > 5) {
+        const nextRow = currentRow + 1;
+        const remainingSessions = Math.min(sessions - 5, 2);
+        
+        for (let i = 0; i < remainingSessions; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          const cell = worksheet.getCell(cellAddress);
+          
+          cell.value = "";
+          cell.border = {
+            top: { style: 'thick', color: { argb: 'FF000000' } },
+            left: { style: 'thick', color: { argb: 'FF000000' } },
+            bottom: { style: 'thick', color: { argb: 'FF000000' } },
+            right: { style: 'thick', color: { argb: 'FF000000' } }
+          };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        });
-      });
+        }
+        
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      }
+      
       currentRow += 2;
     });
+    
     clearUnusedTherapyRows(29, therapyList.length);
     hideUnusedTherapySlots(29, therapyList.length);
 
@@ -478,48 +566,75 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('E36', fullName);
     updateCell('H36', date);
 
-    // Therapy session boxes — Strip
-    let currentRow = 38;
-    therapyList.forEach((therapy) => {
+    currentRow = 39;
+    
+    therapyList.forEach((therapy, index) => {
+      const sessions = Math.min(Number(therapy.sessions || 1), 7);
+      
       updateCell(`A${currentRow}`, therapy.name.toUpperCase());
       const nameCell = worksheet.getCell(`A${currentRow}`);
       nameCell.font = { bold: true, size: 10 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-
-      const boldBorder = {
-        top:    { style: 'thick', color: { argb: 'FF000000' } },
-        left:   { style: 'thick', color: { argb: 'FF000000' } },
-        bottom: { style: 'thick', color: { argb: 'FF000000' } },
-        right:  { style: 'thick', color: { argb: 'FF000000' } }
-      };
-      ['D','E','F','G','H'].forEach(col => {
-        [currentRow, currentRow + 1].forEach(r => {
-          const cell = worksheet.getCell(`${col}${r}`);
-          cell.value = '';
-          cell.border = boldBorder;
+      
+      const sessionCells = ['D', 'E', 'F', 'G', 'H'];
+      
+      for (let i = 0; i < Math.min(sessions, 5); i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        const cell = worksheet.getCell(cellAddress);
+        
+        cell.value = "";
+        cell.border = {
+          top: { style: 'thick', color: { argb: 'FF000000' } },
+          left: { style: 'thick', color: { argb: 'FF000000' } },
+          bottom: { style: 'thick', color: { argb: 'FF000000' } },
+          right: { style: 'thick', color: { argb: 'FF000000' } }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+      
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
+      if (sessions > 5) {
+        const nextRow = currentRow + 1;
+        const remainingSessions = Math.min(sessions - 5, 2);
+        
+        for (let i = 0; i < remainingSessions; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          const cell = worksheet.getCell(cellAddress);
+          
+          cell.value = "";
+          cell.border = {
+            top: { style: 'thick', color: { argb: 'FF000000' } },
+            left: { style: 'thick', color: { argb: 'FF000000' } },
+            bottom: { style: 'thick', color: { argb: 'FF000000' } },
+            right: { style: 'thick', color: { argb: 'FF000000' } }
+          };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        });
-      });
+        }
+        
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      }
+      
       currentRow += 2;
     });
+    
     clearUnusedTherapyRows(39, therapyList.length);
     hideUnusedTherapySlots(38, therapyList.length);
-
-    // Bold outer border for strip section rows 36-43
-    for (let r = 36; r <= 43; r++) {
-      ['A','B','C','D','E','F','G','H'].forEach(col => {
-        try {
-          const cell = worksheet.getCell(`${col}${r}`);
-          const b = cell.border || {};
-          cell.border = {
-            top:    r === 36 ? { style: 'thick', color: { argb: 'FF000000' } } : b.top,
-            bottom: r === 43 ? { style: 'thick', color: { argb: 'FF000000' } } : b.bottom,
-            left:   col === 'A' ? { style: 'thick', color: { argb: 'FF000000' } } : b.left,
-            right:  col === 'H' ? { style: 'thick', color: { argb: 'FF000000' } } : b.right,
-          };
-        } catch (e) {}
-      });
-    }
 
     // Send file
     const buffer = await workbook.xlsx.writeBuffer();
