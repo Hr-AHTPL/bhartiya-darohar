@@ -110,69 +110,123 @@ const exportPrescriptionFormToExcel = async (req, res) => {
 // COMPLETE FUNCTION - Replace the entire exportTherapyCashReceipt function in patientController.js
 // This version ONLY fixes alignment - NO dimension changes
 
+// ==========================================
+// FIXED: Therapy Receipt - Use TODAY's Date & Always Generate NEW Bill Numbers
+// Replace the exportTherapyCashReceipt function (starting at line 113)
+// ==========================================
+
+// ==========================================
+// COMPLETE FIXED FUNCTION - Replace entire exportTherapyCashReceipt
+// Lines 118-478 in patientController.js
+// ==========================================
+
 const exportTherapyCashReceipt = async (req, res) => {
   try {
     const patientId = req.params.id;
+    
+    // ✅ Accept therapy data from query params
+    const { therapyNames, therapySessions, therapyAmounts, discount, approvedBy: approvalBy, receivedAmount } = req.query;
 
-    // Fetch patient details
     const patient = await patientModel.findById(patientId);
     if (!patient) {
       return res.status(404).json({ message: "Patient not found" });
     }
 
-    // Fetch last visit with therapies
-    const lastVisit = await visitModel
+    // ✅ Get LATEST visit (regardless of whether it has therapies)
+    let lastVisit = await visitModel
       .findOne({ patientId: patient._id })
       .sort({ createdAt: -1 });
 
     if (!lastVisit) {
-      return res.status(404).json({ message: "No last visit found" });
+      return res.status(404).json({ 
+        message: "No visit found. Please create a reappointment first." 
+      });
     }
 
-    // Get therapies from database (already stored in visit)
+    console.log(`📋 Found latest visit: ${lastVisit._id}, Date: ${lastVisit.date}`);
+
+    // ✅ If therapies provided from frontend, use them (replaces existing)
+    if (therapyNames && therapySessions && therapyAmounts) {
+      const namesArray = therapyNames.split(',').map(s => s.trim());
+      const sessionsArray = therapySessions.split(',').map(Number);
+      const amountsArray = therapyAmounts.split(',').map(Number);
+      
+      console.log(`📝 Updating visit with ${namesArray.length} NEW therapies from frontend`);
+      
+      // ✅ REPLACE therapies (don't append - this is for THIS visit only)
+      lastVisit.therapies = namesArray.map((name, index) => ({
+        name: name,
+        sessions: sessionsArray[index] || 1,
+        amount: amountsArray[index] || 0
+      }));
+      
+      // Update payment amounts - set to 0 initially, will be calculated from receivedAmount
+      lastVisit.therapyWithAmount = namesArray.map((name, index) => ({
+        name: name,
+        receivedAmount: 0  // Will be distributed based on actual receivedAmount
+      }));
+      
+      // Update discounts if provided
+      if (discount && Number(discount) > 0) {
+        lastVisit.discounts = lastVisit.discounts || {};
+        lastVisit.discounts.therapies = namesArray.map(name => ({
+          name: name,
+          percentage: Number(discount),
+          approvedBy: approvalBy || ""
+        }));
+      }
+      
+      await lastVisit.save();
+      console.log(`✅ Saved ${namesArray.length} therapies to current visit`);
+    }
+
+    // Get therapies from the current visit
     const therapies = lastVisit.therapies || [];
     
     if (therapies.length === 0) {
       return res.status(400).json({ 
-        message: "No therapies found for this patient's last visit" 
+        message: "No therapies found. Please select therapies in the cash receipt dialog."
       });
     }
+
+    console.log(`✅ Using ${therapies.length} therapies from visit: ${lastVisit._id}`);
+    console.log(`   Visit Date: ${lastVisit.date}`);
+    console.log(`   Therapies: ${therapies.map(t => t.name).join(', ')}`);
 
     // Limit to first 3 therapies for the receipt
     const therapyList = therapies.slice(0, 3);
 
-    // Generate Bill Number with T prefix
-    let billNumber;
-if (lastVisit.therapyBillNumber) {
-  billNumber = lastVisit.therapyBillNumber;
-  console.log(`♻️ Reusing therapy bill: ${billNumber}`);
-} else {
-  billNumber = await generateBillNumber('therapy');
-  lastVisit.therapyBillNumber = billNumber;
-  console.log(`✨ New therapy bill: ${billNumber}`);
-}
+    const today = new Date();
+    
+    // Generate NEW bill number and APPEND to array
+    const billNumber = await generateBillNumber('therapy');
+    const billDate = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
 
-console.log(`💾 Saving therapy visit`);
-await lastVisit.save();
-console.log(`✅ Saved: ${lastVisit._id}`);
+    console.log(`✨ Generated NEW therapy bill: ${billNumber}`);
+    console.log(`📅 Bill Date: ${billDate} (TODAY) | Visit Date: ${lastVisit.date}`);
 
-    // Calculate totals from therapyWithAmount (amounts already paid for therapies)
+    // APPEND to array instead of overwriting
+    if (!lastVisit.therapyBills) {
+      lastVisit.therapyBills = [];
+    }
+
+    lastVisit.therapyBills.push({
+      billNumber: billNumber,
+      billDate: billDate,
+      therapies: therapyList.map(t => t.name),
+      createdAt: new Date()
+    });
+
+    await lastVisit.save();
+    console.log(`✅ Saved bill #${lastVisit.therapyBills.length} to visit: ${lastVisit._id}`);
+
+    // Calculate totals from therapyWithAmount
     let totalFee = 0;
-    let totalReceived = 0;
     let totalDiscount = 0;
 
-    // Calculate from the therapies prescribed
     therapyList.forEach(therapy => {
       const fee = Number(therapy.amount || 0);
       totalFee += fee;
-      
-      // Find received amount for this therapy
-      const therapyPayment = lastVisit.therapyWithAmount?.find(
-        t => t.name === therapy.name
-      );
-      if (therapyPayment) {
-        totalReceived += Number(therapyPayment.receivedAmount || 0);
-      }
 
       // Find discount for this therapy
       const therapyDiscount = lastVisit.discounts?.therapies?.find(
@@ -185,10 +239,18 @@ console.log(`✅ Saved: ${lastVisit._id}`);
     });
 
     const totalAfterDiscount = totalFee - totalDiscount;
+    
+    // Use receivedAmount from query params if provided, otherwise calculate from therapyWithAmount
+    const totalReceived = receivedAmount ? Number(receivedAmount) : 
+      therapyList.reduce((sum, therapy) => {
+        const therapyPayment = lastVisit.therapyWithAmount?.find(t => t.name === therapy.name);
+        return sum + Number(therapyPayment?.receivedAmount || 0);
+      }, 0);
+    
     const balance = totalAfterDiscount - totalReceived;
     const discountPercentage = totalFee > 0 ? ((totalDiscount / totalFee) * 100).toFixed(2) : 0;
 
-    // Get approved by names
+    // ✅ FIXED: Use different variable name to avoid conflict
     const approvedByList = [];
     therapyList.forEach(therapy => {
       const therapyDiscount = lastVisit.discounts?.therapies?.find(
@@ -198,7 +260,7 @@ console.log(`✅ Saved: ${lastVisit._id}`);
         approvedByList.push(therapyDiscount.approvedBy);
       }
     });
-    const approvedBy = [...new Set(approvedByList)].join(", ") || "";
+    const approvedByNames = [...new Set(approvedByList)].join(", ") || "";
 
     // Load Excel Template
     const templatePath = path.join(
@@ -223,10 +285,14 @@ console.log(`✅ Saved: ${lastVisit._id}`);
       });
     }
 
-    // Prepare data
-    const date = lastVisit.date || new Date().toLocaleDateString('en-GB');
+    // ✅ Use TODAY's date for the receipt
+    const date = today.toLocaleDateString('en-GB'); // DD/MM/YYYY format
     const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
     const address = `${patient.houseno || ""}, ${patient.city || ""}`.trim();
+
+    console.log(`📅 Receipt Date: ${date} (TODAY)`);
+    console.log(`📋 Bill Number: ${billNumber}`);
+    console.log(`💰 Total: ₹${totalFee}, Received: ₹${totalReceived}, Balance: ₹${balance}`);
 
     // Helper function to update cells safely
     const updateCell = (cellAddress, value) => {
@@ -238,13 +304,53 @@ console.log(`✅ Saved: ${lastVisit._id}`);
       }
     };
 
+    // Helper function to clear borders from a cell
+    const clearBorders = (cellAddress) => {
+      try {
+        const cell = worksheet.getCell(cellAddress);
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
+        };
+      } catch (error) {
+        console.error(`Error clearing borders ${cellAddress}:`, error.message);
+      }
+    };
+
+    // Helper function to clear unused therapy rows
+    const clearUnusedTherapyRows = (startRow, therapyCount) => {
+      const maxTherapies = 3;
+      const usedRows = therapyCount * 2;
+      const totalPossibleRows = maxTherapies * 2;
+      
+      const rowsToClear = totalPossibleRows - usedRows;
+      const clearStartRow = startRow + usedRows;
+      
+      for (let rowOffset = 0; rowOffset < rowsToClear; rowOffset++) {
+        const currentRowNum = clearStartRow + rowOffset;
+        
+        updateCell(`A${currentRowNum}`, "");
+        const nameCell = worksheet.getCell(`A${currentRowNum}`);
+        nameCell.font = { bold: false, size: 11 };
+        
+        const sessionCells = ['D', 'E', 'F', 'G', 'H'];
+        for (const col of sessionCells) {
+          const cellAddress = `${col}${currentRowNum}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      }
+    };
+
     // ==========================================
     // FIRST COPY (Top Bill)
     // ==========================================
     
     updateCell('B5', billNumber);
     updateCell('E5', patient.idno || "");
-    updateCell('H5', date);
+    updateCell('H5', date);  // ✅ TODAY's date
 
     updateCell('B6', fullName);
     updateCell('F6', patient.gender || "");
@@ -255,7 +361,7 @@ console.log(`✅ Saved: ${lastVisit._id}`);
 
     updateCell('B8', totalFee);
     updateCell('E8', `${discountPercentage}%`);
-    updateCell('H8', approvedBy);
+    updateCell('H8', approvedByNames);
 
     updateCell('B9', totalAfterDiscount);
     updateCell('E9', totalReceived);
@@ -267,20 +373,18 @@ console.log(`✅ Saved: ${lastVisit._id}`);
     therapyList.forEach((therapy, index) => {
       const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
-      // Therapy name in column A
       updateCell(`A${currentRow}`, therapy.name.toUpperCase());
       const nameCell = worksheet.getCell(`A${currentRow}`);
       nameCell.font = { bold: true, size: 11 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
-      // Session rectangles in columns D-H (first 5 sessions)
       const sessionCells = ['D', 'E', 'F', 'G', 'H'];
       
       for (let i = 0; i < Math.min(sessions, 5); i++) {
         const cellAddress = `${sessionCells[i]}${currentRow}`;
         const cell = worksheet.getCell(cellAddress);
         
-        cell.value = ""; // Empty cell
+        cell.value = "";
         cell.border = {
           top: { style: 'thick', color: { argb: 'FF000000' } },
           left: { style: 'thick', color: { argb: 'FF000000' } },
@@ -290,10 +394,15 @@ console.log(`✅ Saved: ${lastVisit._id}`);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
-      // If more than 5 sessions, add remaining in next row
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
       if (sessions > 5) {
         const nextRow = currentRow + 1;
-        const remainingSessions = Math.min(sessions - 5, 2); // Max 2 more (sessions 6 & 7)
+        const remainingSessions = Math.min(sessions - 5, 2);
         
         for (let i = 0; i < remainingSessions; i++) {
           const cellAddress = `${sessionCells[i]}${nextRow}`;
@@ -308,11 +417,25 @@ console.log(`✅ Saved: ${lastVisit._id}`);
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
       }
       
-      // Move to next therapy (skip 2 rows)
       currentRow += 2;
     });
+    
+    clearUnusedTherapyRows(11, therapyList.length);
 
     // ==========================================
     // SECOND COPY (Middle Bill)
@@ -331,25 +454,22 @@ console.log(`✅ Saved: ${lastVisit._id}`);
 
     updateCell('B26', totalFee);
     updateCell('E26', `${discountPercentage}%`);
-    updateCell('H26', approvedBy);
+    updateCell('H26', approvedByNames);
 
     updateCell('B27', totalAfterDiscount);
     updateCell('E27', totalReceived);
     updateCell('H27', balance);
 
-    // Therapy names and session rectangles - Second Copy
     currentRow = 29;
     
     therapyList.forEach((therapy, index) => {
       const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
-      // Therapy name in column A
       updateCell(`A${currentRow}`, therapy.name.toUpperCase());
       const nameCell = worksheet.getCell(`A${currentRow}`);
       nameCell.font = { bold: true, size: 11 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
-      // Session rectangles in columns D-H
       const sessionCells = ['D', 'E', 'F', 'G', 'H'];
       
       for (let i = 0; i < Math.min(sessions, 5); i++) {
@@ -366,7 +486,12 @@ console.log(`✅ Saved: ${lastVisit._id}`);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
-      // Handle sessions 6-7
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
       if (sessions > 5) {
         const nextRow = currentRow + 1;
         const remainingSessions = Math.min(sessions - 5, 2);
@@ -384,10 +509,25 @@ console.log(`✅ Saved: ${lastVisit._id}`);
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
       }
       
       currentRow += 2;
     });
+    
+    clearUnusedTherapyRows(29, therapyList.length);
 
     // ==========================================
     // STRIP SECTION (Bottom)
@@ -398,19 +538,16 @@ console.log(`✅ Saved: ${lastVisit._id}`);
     updateCell('E37', fullName);
     updateCell('H37', date);
 
-    // Therapy names and session rectangles - Strip
     currentRow = 39;
     
     therapyList.forEach((therapy, index) => {
       const sessions = Math.min(Number(therapy.sessions || 1), 7);
       
-      // Therapy name in column A
       updateCell(`A${currentRow}`, therapy.name.toUpperCase());
       const nameCell = worksheet.getCell(`A${currentRow}`);
       nameCell.font = { bold: true, size: 10 };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       
-      // Session rectangles in columns D-H
       const sessionCells = ['D', 'E', 'F', 'G', 'H'];
       
       for (let i = 0; i < Math.min(sessions, 5); i++) {
@@ -427,7 +564,12 @@ console.log(`✅ Saved: ${lastVisit._id}`);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
       
-      // Handle sessions 6-7
+      for (let i = sessions; i < 5; i++) {
+        const cellAddress = `${sessionCells[i]}${currentRow}`;
+        updateCell(cellAddress, "");
+        clearBorders(cellAddress);
+      }
+      
       if (sessions > 5) {
         const nextRow = currentRow + 1;
         const remainingSessions = Math.min(sessions - 5, 2);
@@ -445,18 +587,33 @@ console.log(`✅ Saved: ${lastVisit._id}`);
           };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
+        
+        for (let i = remainingSessions; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
+      } else {
+        const nextRow = currentRow + 1;
+        for (let i = 0; i < 5; i++) {
+          const cellAddress = `${sessionCells[i]}${nextRow}`;
+          updateCell(cellAddress, "");
+          clearBorders(cellAddress);
+        }
       }
       
       currentRow += 2;
     });
+    
+    clearUnusedTherapyRows(39, therapyList.length);
 
     // Send file
     const buffer = await workbook.xlsx.writeBuffer();
     const cleanPatientName = fullName.replace(/[^a-zA-Z0-9]/g, '_');
     const cleanBillNumber = billNumber.replace(/\//g, '_');
-    const therapyNames = therapyList.map(t => t.name).join('_');
+    const therapyNamesForFile = therapyList.map(t => t.name).join('_').substring(0, 50);
 
-    const fileName = `${cleanBillNumber}_${cleanPatientName}_${therapyNames}_therapy_receipt.xlsx`;
+    const fileName = `${cleanBillNumber}_${cleanPatientName}_therapy_receipt_${date.replace(/\//g, '-')}.xlsx`;
 
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.setHeader(
@@ -465,8 +622,11 @@ console.log(`✅ Saved: ${lastVisit._id}`);
     );
     res.send(buffer);
 
+    console.log(`✅ Therapy receipt generated successfully`);
+    console.log(`   File: ${fileName}`);
+
   } catch (error) {
-    console.error("Error exporting therapy cash receipt:", error);
+    console.error("❌ Error exporting therapy cash receipt:", error);
     res.status(500).json({ 
       message: "Internal Server Error", 
       error: error.message,
@@ -474,15 +634,6 @@ console.log(`✅ Saved: ${lastVisit._id}`);
     });
   }
 };
-
-// Export this function in module.exports at the bottom of patientController.js
-// Don't forget to add this to module.exports at the bottom of patientController.js
-
-
-// ===================================================================
-// CORRECTED exportPrakritiCashReceipt Function
-// Replace this entire function in patientController.js (starts around line 482)
-// ===================================================================
 
 const exportPrakritiCashReceipt = async (req, res) => {
   try {
@@ -501,9 +652,10 @@ const exportPrakritiCashReceipt = async (req, res) => {
       return res.status(404).json({ message: "Patient not found" });
     }
 
-    const lastVisit = await visitModel
-      .findOne({ patientId: patient._id })
-      .sort({ createdAt: -1 });
+    // ✅ Get most recent visit (for consultation/prakriti)
+const lastVisit = await visitModel
+  .findOne({ patientId: patient._id })
+  .sort({ createdAt: -1 });
 
     if (!lastVisit) {
       return res.status(404).json({ message: "No last visit found" });
@@ -1555,7 +1707,7 @@ const exportPatientBillingMaster = async (req, res) => {
         therapyamount: therapy,
         totalamount: total,
         therapyname: therapyNames,
-        date: record.visitDate,
+        date: record.billDate || record.visitDate,
         sponsor: record.sponsor || "",
       };
     });
@@ -2915,79 +3067,88 @@ const exportTherapyReport = async (req, res) => {
     console.log("💆 Looking for therapies:", selectedTherapies);
 
     // Single aggregation query
-    const results = await patientModel.aggregate([
-      {
-        $lookup: {
-          from: "visits",
-          localField: "_id",
-          foreignField: "patientId",
-          as: "visits",
-        },
-      },
-      {
-        $unwind: {
-          path: "$visits",
-          preserveNullAndEmptyArrays: false,
-        },
-      },
-      {
-        $unwind: {
-          path: "$visits.therapyWithAmount",
-          preserveNullAndEmptyArrays: false,
-        },
-      },
-      {
-        $project: {
-          idno: 1,
-          firstName: 1,
-          lastName: 1,
-          age: 1,
-          gender: 1,
-          phone: 1,
-          aadharnum: 1,
-          visitDate: "$visits.date",
-          therapyName: "$visits.therapyWithAmount.name",
-          therapyBillNumber: "$visits.therapyBillNumber",
-          therapyAmount: "$visits.therapyWithAmount.receivedAmount",
-        },
-      },
-    ]);
+   // ✅ FIXED: Aggregation for new therapyBills schema
+const results = await patientModel.aggregate([
+  {
+    $lookup: {
+      from: "visits",
+      localField: "_id",
+      foreignField: "patientId",
+      as: "visits",
+    },
+  },
+  {
+    $unwind: {
+      path: "$visits",
+      preserveNullAndEmptyArrays: false,
+    },
+  },
+  {
+    $unwind: {
+      path: "$visits.therapyBills",  // ✅ Unwind bills array
+      preserveNullAndEmptyArrays: false,
+    },
+  },
+  {
+    $project: {
+      idno: 1,
+      firstName: 1,
+      lastName: 1,
+      age: 1,
+      gender: 1,
+      phone: 1,
+      aadharnum: 1,
+      visitDate: "$visits.date",
+      billDate: "$visits.therapyBills.billDate",  // ✅ From therapyBills array
+      billNumber: "$visits.therapyBills.billNumber",  // ✅ From therapyBills array
+      therapies: "$visits.therapyBills.therapies",  // ✅ Array of therapy names
+      therapyWithAmount: "$visits.therapyWithAmount",  // ✅ Keep for amount lookup
+    },
+  },
+]);
 
     console.log(`📦 Total therapy records from DB: ${results.length}`);
 
     // ✅ FIXED: Parse visit dates with universal parser
-    const filteredRows = results.filter((record) => {
-      // Check therapy match (case-insensitive)
-      const therapyName = record.therapyName?.trim().toLowerCase();
-      if (!therapyName) {
-        console.log("⚠️ Record missing therapy name:", record.idno);
-        return false;
-      }
-      
-      if (!selectedTherapies.includes(therapyName)) {
-        return false;
-      }
+   const filteredRows = results.filter((record) => {
+  // ✅ Check if ANY therapy on this bill matches selected therapies
+  const billTherapies = record.therapies || [];
+  if (billTherapies.length === 0) {
+    console.log("⚠️ Record missing therapies:", record.idno);
+    return false;
+  }
+  
+  // Check if at least one therapy matches
+  const hasMatchingTherapy = billTherapies.some(therapyName => {
+    const normalizedName = therapyName?.trim().toLowerCase();
+    return normalizedName && selectedTherapies.includes(normalizedName);
+  });
+  
+  if (!hasMatchingTherapy) {
+    return false;
+  }
 
-      // Check date range
-      if (!record.visitDate) {
-        console.log("⚠️ Record missing visit date:", record.idno);
-        return false;
-      }
-      
-      try {
-        const visitDate = parseDate(record.visitDate);
-        if (!visitDate || isNaN(visitDate.getTime())) {
-          console.log("⚠️ Invalid visit date format:", record.visitDate);
-          return false;
-        }
-        
-        visitDate.setHours(0, 0, 0, 0);
-        return visitDate >= fromDate && visitDate <= toDate;
-      } catch (e) {
-        console.error("❌ Date parse error:", record.visitDate, e);
-        return false;
-      }
-    });
+  // ✅ Check date range using BILL DATE
+  const dateToCheck = record.billDate || record.visitDate;
+  if (!dateToCheck) {
+    console.log("⚠️ Record missing date:", record.idno);
+    return false;
+  }
+
+  try {
+    const checkDate = parseDate(dateToCheck);
+    if (!checkDate || isNaN(checkDate.getTime())) {
+      console.log("⚠️ Invalid date format:", dateToCheck);
+      return false;
+    }
+    
+    checkDate.setHours(0, 0, 0, 0);
+    return checkDate >= fromDate && checkDate <= toDate;
+  } catch (e) {
+    console.error("❌ Date parse error:", dateToCheck, e);
+    return false;
+  }
+});
 
     console.log(`✅ Filtered therapy records: ${filteredRows.length}`);
 
@@ -3033,18 +3194,27 @@ const exportTherapyReport = async (req, res) => {
     });
 
     // Add rows
-    const rows = filteredRows.map((record) => ({
-      idno: record.idno || "",
-      billNumber: index === 0 ? (record.therapyBillNumber || "N/A") : "",
-      name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
-      age: record.age || "",
-      gender: record.gender || "",
-      phone: record.phone || "",
-      aadharnum: record.aadharnum ? record.aadharnum.toString().padStart(12, "0") : "",
-      therapyname: record.therapyName || "",
-      therapyamount: Number(record.therapyAmount) || 0,
-      date: record.visitDate || "",
-    }));
+    const rows = filteredRows.map((record) => {
+  // ✅ Calculate total amount for this bill
+  const billTherapies = record.therapies || [];
+  const totalAmount = billTherapies.reduce((sum, therapyName) => {
+    const therapy = record.therapyWithAmount?.find(t => t.name === therapyName);
+    return sum + (Number(therapy?.receivedAmount) || 0);
+  }, 0);
+
+  return {
+    idno: record.idno || "",
+    billNumber: record.billNumber || "N/A",
+    name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+    age: record.age || "",
+    gender: record.gender || "",
+    phone: record.phone || "",
+    aadharnum: record.aadharnum ? record.aadharnum.toString().padStart(12, "0") : "",
+    therapyname: billTherapies.join(", "),  // ✅ All therapies on this bill
+    therapyamount: totalAmount,  // ✅ Total amount for this bill
+    date: record.billDate || record.visitDate,
+  };
+});
 
     worksheet.addRows(rows);
 
