@@ -350,10 +350,8 @@ const exportTherapyCashReceipt = async (req, res) => {
       }
     };
 
-    // Hide unused therapy slot rows so only the slots that have a therapy
-    // are visible. Each therapy occupies exactly 2 rows in the template.
-    // The template has pre-drawn bold borders for all 3 slots — hiding the
-    // rows of unused slots makes those borders invisible without touching them.
+    // Hide the 2 rows of each unused therapy slot so the template's
+    // pre-drawn bold borders on used slots stay perfectly intact.
     const hideUnusedTherapySlots = (sectionStartRow, therapyCount) => {
       for (let slot = therapyCount; slot < 3; slot++) {
         const slotStartRow = sectionStartRow + slot * 2;
@@ -364,8 +362,8 @@ const exportTherapyCashReceipt = async (req, res) => {
           const row2 = worksheet.getRow(slotStartRow + 1);
           row2.height = 0;
           row2.hidden = true;
-        } catch (error) {
-          console.error(`Error hiding therapy slot rows ${slotStartRow}-${slotStartRow + 1}:`, error.message);
+        } catch (err) {
+          console.error(`Error hiding rows ${slotStartRow}-${slotStartRow + 1}:`, err.message);
         }
       }
     };
@@ -445,13 +443,6 @@ const exportTherapyCashReceipt = async (req, res) => {
         }
         
         for (let i = remainingSessions; i < 5; i++) {
-          const cellAddress = `${sessionCells[i]}${nextRow}`;
-          updateCell(cellAddress, "");
-          clearBorders(cellAddress);
-        }
-      } else {
-        const nextRow = currentRow + 1;
-        for (let i = 0; i < 5; i++) {
           const cellAddress = `${sessionCells[i]}${nextRow}`;
           updateCell(cellAddress, "");
           clearBorders(cellAddress);
@@ -542,13 +533,6 @@ const exportTherapyCashReceipt = async (req, res) => {
           updateCell(cellAddress, "");
           clearBorders(cellAddress);
         }
-      } else {
-        const nextRow = currentRow + 1;
-        for (let i = 0; i < 5; i++) {
-          const cellAddress = `${sessionCells[i]}${nextRow}`;
-          updateCell(cellAddress, "");
-          clearBorders(cellAddress);
-        }
       }
       
       currentRow += 2;
@@ -566,7 +550,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('E36', fullName);
     updateCell('H36', date);
 
-    currentRow = 39;
+    currentRow = 38;
     
     therapyList.forEach((therapy, index) => {
       const sessions = Math.min(Number(therapy.sessions || 1), 7);
@@ -621,13 +605,6 @@ const exportTherapyCashReceipt = async (req, res) => {
           updateCell(cellAddress, "");
           clearBorders(cellAddress);
         }
-      } else {
-        const nextRow = currentRow + 1;
-        for (let i = 0; i < 5; i++) {
-          const cellAddress = `${sessionCells[i]}${nextRow}`;
-          updateCell(cellAddress, "");
-          clearBorders(cellAddress);
-        }
       }
       
       currentRow += 2;
@@ -635,6 +612,30 @@ const exportTherapyCashReceipt = async (req, res) => {
     
     clearUnusedTherapyRows(39, therapyList.length);
     hideUnusedTherapySlots(38, therapyList.length);
+
+    // Bold outline for strip section (rows 36-43, columns A-H)
+    const stripBoldBorder = {
+      top: { style: 'thick', color: { argb: 'FF000000' } },
+      left: { style: 'thick', color: { argb: 'FF000000' } },
+      bottom: { style: 'thick', color: { argb: 'FF000000' } },
+      right: { style: 'thick', color: { argb: 'FF000000' } }
+    };
+    const stripCols = ['A','B','C','D','E','F','G','H'];
+    for (let r = 36; r <= 43; r++) {
+      for (const col of stripCols) {
+        try {
+          const cell = worksheet.getCell(`${col}${r}`);
+          const existing = cell.border || {};
+          // Apply thick on outer edges, preserve inner borders
+          cell.border = {
+            top:    r === 36 ? stripBoldBorder.top    : existing.top,
+            bottom: r === 43 ? stripBoldBorder.bottom : existing.bottom,
+            left:   col === 'A' ? stripBoldBorder.left  : existing.left,
+            right:  col === 'H' ? stripBoldBorder.right : existing.right,
+          };
+        } catch (err) { /* skip */ }
+      }
+    }
 
     // Send file
     const buffer = await workbook.xlsx.writeBuffer();
