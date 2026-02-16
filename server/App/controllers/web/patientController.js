@@ -168,12 +168,18 @@ const exportTherapyCashReceipt = async (req, res) => {
       
       // Update discounts if provided
       if (discount && Number(discount) > 0) {
-        lastVisit.discounts = lastVisit.discounts || {};
+        // ✅ FIX: Never reassign lastVisit.discounts — it is a Mongoose subdocument.
+        // Reassigning it to a plain {} destroys the schema structure and causes
+        // a validation error on .save(). Just set .therapies directly.
+        if (!lastVisit.discounts) {
+          lastVisit.discounts = {};
+        }
         lastVisit.discounts.therapies = namesArray.map(name => ({
           name: name,
           percentage: Number(discount),
           approvedBy: approvalBy || ""
         }));
+        lastVisit.markModified('discounts');
       }
       
       await lastVisit.save();
