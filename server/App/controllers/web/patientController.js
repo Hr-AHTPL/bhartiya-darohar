@@ -325,45 +325,8 @@ const exportTherapyCashReceipt = async (req, res) => {
       }
     };
 
-    // Helper function to clear unused therapy rows
-    const clearUnusedTherapyRows = (startRow, therapyCount) => {
-      const maxTherapies = 3;
-      const usedRows = therapyCount * 2;
-      const totalPossibleRows = maxTherapies * 2;
-      
-      const rowsToClear = totalPossibleRows - usedRows;
-      const clearStartRow = startRow + usedRows;
-      
-      for (let rowOffset = 0; rowOffset < rowsToClear; rowOffset++) {
-        const currentRowNum = clearStartRow + rowOffset;
-        
-        updateCell(`A${currentRowNum}`, "");
-        const nameCell = worksheet.getCell(`A${currentRowNum}`);
-        nameCell.font = { bold: false, size: 11 };
-        
-        const sessionCells = ['D', 'E', 'F', 'G', 'H'];
-        for (const col of sessionCells) {
-          const cellAddress = `${col}${currentRowNum}`;
-          updateCell(cellAddress, "");
-          clearBorders(cellAddress);
-        }
-      }
-    };
 
-    // Hide the 2 rows of each unused therapy slot so only active slots show.
-    const hideUnusedTherapySlots = (sectionStartRow, therapyCount) => {
-      for (let slot = therapyCount; slot < 3; slot++) {
-        const slotStartRow = sectionStartRow + slot * 2;
-        try {
-          const r1 = worksheet.getRow(slotStartRow);
-          r1.height = 0; r1.hidden = true;
-          const r2 = worksheet.getRow(slotStartRow + 1);
-          r2.height = 0; r2.hidden = true;
-        } catch (err) {
-          console.error(`Error hiding rows ${slotStartRow}-${slotStartRow+1}:`, err.message);
-        }
-      }
-    };
+
 
     // ==========================================
     // FIRST COPY (Top Bill)
@@ -388,36 +351,15 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('E9', totalReceived);
     updateCell('H9', balance);
 
-    // Therapy session boxes — Copy 1
-    // Template: each slot has 2 rows × 5 cols (D-H) of bold tick boxes.
-    // ALL 10 cells are always drawn bold for every used therapy slot.
-    let currentRow = 11;
-    therapyList.forEach((therapy) => {
-      // Write therapy name (row 1 of slot)
-      updateCell(`A${currentRow}`, therapy.name.toUpperCase());
-      const nameCell = worksheet.getCell(`A${currentRow}`);
-      nameCell.font = { bold: true, size: 11 };
-      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-
-      const boldBorder = {
-        top:    { style: 'thick', color: { argb: 'FF000000' } },
-        left:   { style: 'thick', color: { argb: 'FF000000' } },
-        bottom: { style: 'thick', color: { argb: 'FF000000' } },
-        right:  { style: 'thick', color: { argb: 'FF000000' } }
-      };
-      // Draw bold borders on both rows (row 1 and row 2) for all 5 columns D-H
-      ['D','E','F','G','H'].forEach(col => {
-        [currentRow, currentRow + 1].forEach(r => {
-          const cell = worksheet.getCell(`${col}${r}`);
-          cell.value = '';
-          cell.border = boldBorder;
-          cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        });
-      });
-      currentRow += 2;
+    // Therapy names — Copy 1
+    // Fixed rows: T1=A11, T2=A13, T3=A15. Bold cells are in template, untouched.
+    const copy1Rows = [11, 13, 15];
+    therapyList.slice(0, 3).forEach((therapy, index) => {
+      const cell = worksheet.getCell(`A${copy1Rows[index]}`);
+      cell.value = therapy.name.toUpperCase();
+      cell.font = { bold: true, size: 11 };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
-    clearUnusedTherapyRows(11, therapyList.length);
-    hideUnusedTherapySlots(11, therapyList.length);
 
     // ==========================================
     // SECOND COPY (Middle Bill)
@@ -442,84 +384,35 @@ const exportTherapyCashReceipt = async (req, res) => {
     updateCell('E27', totalReceived);
     updateCell('H27', balance);
 
-    // Therapy session boxes — Copy 2
-    currentRow = 29;
-    therapyList.forEach((therapy) => {
-      updateCell(`A${currentRow}`, therapy.name.toUpperCase());
-      const nameCell = worksheet.getCell(`A${currentRow}`);
-      nameCell.font = { bold: true, size: 11 };
-      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-
-      const boldBorder = {
-        top:    { style: 'thick', color: { argb: 'FF000000' } },
-        left:   { style: 'thick', color: { argb: 'FF000000' } },
-        bottom: { style: 'thick', color: { argb: 'FF000000' } },
-        right:  { style: 'thick', color: { argb: 'FF000000' } }
-      };
-      ['D','E','F','G','H'].forEach(col => {
-        [currentRow, currentRow + 1].forEach(r => {
-          const cell = worksheet.getCell(`${col}${r}`);
-          cell.value = '';
-          cell.border = boldBorder;
-          cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        });
-      });
-      currentRow += 2;
+    // Therapy names — Copy 2
+    // Fixed rows: T1=A29, T2=A31, T3=A33. Bold cells are in template, untouched.
+    const copy2Rows = [29, 31, 33];
+    therapyList.slice(0, 3).forEach((therapy, index) => {
+      const cell = worksheet.getCell(`A${copy2Rows[index]}`);
+      cell.value = therapy.name.toUpperCase();
+      cell.font = { bold: true, size: 11 };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
-    clearUnusedTherapyRows(29, therapyList.length);
-    hideUnusedTherapySlots(29, therapyList.length);
 
     // ==========================================
     // STRIP SECTION (Bottom)
     // ==========================================
     
+    // Strip header
     updateCell('B36', patient.idno || "");
     updateCell('B37', billNumber);
     updateCell('E36', fullName);
     updateCell('H36', date);
 
-    // Therapy session boxes — Strip
-    currentRow = 38;
-    therapyList.forEach((therapy) => {
-      updateCell(`A${currentRow}`, therapy.name.toUpperCase());
-      const nameCell = worksheet.getCell(`A${currentRow}`);
-      nameCell.font = { bold: true, size: 10 };
-      nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-
-      const boldBorder = {
-        top:    { style: 'thick', color: { argb: 'FF000000' } },
-        left:   { style: 'thick', color: { argb: 'FF000000' } },
-        bottom: { style: 'thick', color: { argb: 'FF000000' } },
-        right:  { style: 'thick', color: { argb: 'FF000000' } }
-      };
-      ['D','E','F','G','H'].forEach(col => {
-        [currentRow, currentRow + 1].forEach(r => {
-          const cell = worksheet.getCell(`${col}${r}`);
-          cell.value = '';
-          cell.border = boldBorder;
-          cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        });
-      });
-      currentRow += 2;
+    // Therapy names — Strip
+    // Fixed rows: T1=A38, T2=A40, T3=A42. Bold cells are in template, untouched.
+    const stripRows = [38, 40, 42];
+    therapyList.slice(0, 3).forEach((therapy, index) => {
+      const cell = worksheet.getCell(`A${stripRows[index]}`);
+      cell.value = therapy.name.toUpperCase();
+      cell.font = { bold: true, size: 10 };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
-    clearUnusedTherapyRows(39, therapyList.length);
-    hideUnusedTherapySlots(38, therapyList.length);
-
-    // Bold outer border for strip section rows 36-43
-    for (let r = 36; r <= 43; r++) {
-      ['A','B','C','D','E','F','G','H'].forEach(col => {
-        try {
-          const cell = worksheet.getCell(`${col}${r}`);
-          const b = cell.border || {};
-          cell.border = {
-            top:    r === 36 ? { style: 'thick', color: { argb: 'FF000000' } } : b.top,
-            bottom: r === 43 ? { style: 'thick', color: { argb: 'FF000000' } } : b.bottom,
-            left:   col === 'A' ? { style: 'thick', color: { argb: 'FF000000' } } : b.left,
-            right:  col === 'H' ? { style: 'thick', color: { argb: 'FF000000' } } : b.right,
-          };
-        } catch (e) {}
-      });
-    }
 
     // Send file
     const buffer = await workbook.xlsx.writeBuffer();
