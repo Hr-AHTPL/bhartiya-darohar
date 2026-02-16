@@ -993,12 +993,26 @@ const handleCashReceiptSubmit = async () => {
     // ✅ Use DIFFERENT endpoints based on purpose
     if (finalPurpose === "Therapy") {
       // NEW ENDPOINT: Therapy receipts with oval session tracking
-      response = await axios.get(
-        `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`,
-        {
-          responseType: "blob"
-        }
-      );
+      const therapyNames = addedTherapies.map(t => t.name).join(',');
+const therapySessions = addedTherapies.map(t => t.sessions).join(',');
+const therapyAmounts = addedTherapies.map(t => t.totalPrice).join(',');
+
+console.log('📤 Sending therapy receipt request:', {
+  therapyNames,
+  therapySessions,
+  therapyAmounts,
+  receivedAmount: numericReceived,
+  discount,
+  approvedBy
+});
+
+response = await axios.get(
+  `${API_BASE_URL}/api/website/enquiry/therapy-receipt/${selectedPatient.id}`,
+  {
+    responseType: "blob",
+    params: { therapyNames, therapySessions, therapyAmounts, receivedAmount: numericReceived, discount, approvedBy }
+  }
+);
     } else {
       // OLD ENDPOINT: Consultation, Prakriti Parikshan, Others
       response = await axios.get(
