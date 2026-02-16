@@ -5,7 +5,12 @@ const visitSchema = new Schema(
   {
 
     consultationBillNumber: { type: String, sparse: true }, // ✅ NEW
-    therapyBillNumber: { type: String, sparse: true },      // ✅ NEW
+    therapyBills: [{  // ✅ Array to store multiple bills
+    billNumber: { type: String },
+    billDate: { type: String },
+    therapies: [String],  // Which therapies were on this bill
+    createdAt: { type: Date, default: Date.now }
+    }],
     prakritiBillNumber: { type: String, sparse: true },     // ✅ NEW
     patientId: { type: Schema.Types.ObjectId, ref: "Enquiry", required: true },
     date: { type: String, required: true },
