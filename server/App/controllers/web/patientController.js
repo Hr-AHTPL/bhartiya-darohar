@@ -356,7 +356,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     const copy1Rows = [11, 13, 15];
     therapyList.slice(0, 3).forEach((therapy, index) => {
       const cell = worksheet.getCell(`A${copy1Rows[index]}`);
-      cell.value = therapy.name.toUpperCase();
+      cell.value = `${therapy.name.toUpperCase()}(${therapy.sessions || 1})`;
       cell.font = { bold: true, size: 11 };
       cell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
@@ -389,7 +389,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     const copy2Rows = [29, 31, 33];
     therapyList.slice(0, 3).forEach((therapy, index) => {
       const cell = worksheet.getCell(`A${copy2Rows[index]}`);
-      cell.value = therapy.name.toUpperCase();
+      cell.value = `${therapy.name.toUpperCase()}(${therapy.sessions || 1})`;
       cell.font = { bold: true, size: 11 };
       cell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
@@ -409,7 +409,7 @@ const exportTherapyCashReceipt = async (req, res) => {
     const stripRows = [38, 40, 42];
     therapyList.slice(0, 3).forEach((therapy, index) => {
       const cell = worksheet.getCell(`A${stripRows[index]}`);
-      cell.value = therapy.name.toUpperCase();
+      cell.value = `${therapy.name.toUpperCase()}(${therapy.sessions || 1})`;
       cell.font = { bold: true, size: 10 };
       cell.alignment = { horizontal: 'left', vertical: 'middle' };
     });
