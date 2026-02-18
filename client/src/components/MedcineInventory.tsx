@@ -611,6 +611,8 @@ const handleUpdateSale = async () => {
 
   try {
     const token = localStorage.getItem('token');
+    
+    // Step 1: Update the sale
     const response = await fetch(`${API_BASE_URL}/api/sale/${editingSaleId}`, {
       method: 'PUT',
       headers: {
@@ -630,7 +632,73 @@ const handleUpdateSale = async () => {
     const result = await response.json();
 
     if (response.ok) {
-      alert('Sale updated successfully');
+      // Show success message
+      alert('Sale updated successfully! Your updated bill will download shortly.');
+      
+      // Step 2: Download the updated bill automatically
+      try {
+        const billResponse = await fetch(
+          `${API_BASE_URL}/api/sale/${editingSaleId}/download-bill`,
+          {
+            method: 'GET',
+            headers: {
+              'Authorization': token || '',
+            },
+          }
+        );
+
+        if (billResponse.ok) {
+          // Get the blob from response
+          const blob = await billResponse.blob();
+          
+          // Create download link
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          
+          // Extract filename from Content-Disposition header or create default
+          // ✅ FIXED: Better filename extraction
+const contentDisposition = billResponse.headers.get('Content-Disposition');
+let fileName = `Updated_Invoice_${editSale.patientId}_${Date.now()}.xlsx`;
+
+if (contentDisposition) {
+  // Extract filename properly - match filename="..." or filename=...
+  const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+  if (fileNameMatch && fileNameMatch[1]) {
+    // Remove quotes and trim
+    fileName = fileNameMatch[1].replace(/['"]/g, '').trim();
+  }
+}
+
+// ✅ ENSURE .xlsx extension (no extra characters)
+if (!fileName.endsWith('.xlsx')) {
+  fileName = fileName.replace(/\.xlsx.*$/, '.xlsx'); // Remove anything after .xlsx
+  if (!fileName.endsWith('.xlsx')) {
+    fileName = fileName + '.xlsx'; // Add if missing
+  }
+}
+          
+          link.download = fileName;
+          
+          // Trigger download
+          document.body.appendChild(link);
+          link.click();
+          
+          // Cleanup
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+          
+          console.log('✅ Bill downloaded successfully');
+        } else {
+          console.error('Failed to download bill:', await billResponse.text());
+          alert('Sale updated successfully, but failed to download the bill. Please try downloading manually.');
+        }
+      } catch (billError) {
+        console.error('Error downloading bill:', billError);
+        alert('Sale updated successfully, but failed to download the bill. Please try downloading manually.');
+      }
+      
+      // Step 3: Clean up and refresh
       setIsEditingSale(false);
       setEditingSaleId(null);
       setEditSale({
@@ -667,7 +735,6 @@ const handleUpdateSale = async () => {
     alert('Error updating sale');
   }
 };
-
 
 // Add Medicine to Edit Sale
 const addMedicineToEditSale = () => {
