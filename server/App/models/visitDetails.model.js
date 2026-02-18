@@ -113,5 +113,10 @@ const visitSchema = new Schema(
   { timestamps: true }
 );
 
+// Add at the bottom of visitDetails_model.js, before module.exports
+visitSchema.index({ patientId: 1, createdAt: -1 }); // ✅ covers findOne + sort
+visitSchema.index({ "therapies.name": 1 });           // ✅ covers therapy lookups
+visitSchema.index({ "therapyBills.billDate": 1 });    // ✅ covers therapy report date filtering
+
 const visitModel = mongoose.model("Visit", visitSchema);
 module.exports = visitModel;
