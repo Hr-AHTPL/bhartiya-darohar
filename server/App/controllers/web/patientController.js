@@ -2828,136 +2828,173 @@ const exportTherapyReport = async (req, res) => {
       });
     }
 
-    // Parse therapies (case-insensitive)
     const selectedTherapies = selectedTherapy
       .split(",")
       .map((t) => t.trim().toLowerCase())
-      .filter(t => t.length > 0);
+      .filter((t) => t.length > 0);
 
     if (selectedTherapies.length === 0) {
-      return res.status(400).json({
-        message: "No valid therapies provided",
-      });
+      return res.status(400).json({ message: "No valid therapies provided" });
     }
 
-    // ✅ FIXED: Universal date parser that handles BOTH formats
+    // Universal date parser: handles DD/MM/YYYY and YYYY-MM-DD
     const parseDate = (str) => {
       if (!str) return null;
-      
-      // Handle DD/MM/YYYY format (from database)
       if (str.includes("/")) {
         const [day, month, year] = str.split("/").map(Number);
+        if (!day || !month || !year) return null;
         return new Date(year, month - 1, day);
       }
-      
-      // Handle YYYY-MM-DD format (from frontend)
       if (str.includes("-")) {
-        return new Date(str);
+        const d = new Date(str);
+        return isNaN(d.getTime()) ? null : d;
       }
-      
       return null;
     };
 
     const fromDate = parseDate(dateFrom);
     const toDate = parseDate(dateTo);
-    
+
     if (!fromDate || !toDate || isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
       return res.status(400).json({
-        message: "Invalid date format. Please use YYYY-MM-DD or DD/MM/YYYY",
+        message: "Invalid date format. Use YYYY-MM-DD or DD/MM/YYYY",
       });
     }
-    
+
     toDate.setHours(23, 59, 59, 999);
     fromDate.setHours(0, 0, 0, 0);
 
-    console.log("📅 Parsed Date Range:", { fromDate, toDate });
-    console.log("💆 Looking for therapies:", selectedTherapies);
+    console.log("📅 Date Range:", { fromDate, toDate });
+    console.log("💆 Therapies:", selectedTherapies);
 
-    // Single aggregation query
-   // ✅ FIXED: Aggregation for new therapyBills schema
-const results = await patientModel.aggregate([
-  {
-    $lookup: {
-      from: "visits",
-      localField: "_id",
-      foreignField: "patientId",
-      as: "visits",
-    },
-  },
-  {
-    $unwind: {
-      path: "$visits",
-      preserveNullAndEmptyArrays: false,
-    },
-  },
-  {
-    $unwind: {
-      path: "$visits.therapyBills",  // ✅ Unwind bills array
-      preserveNullAndEmptyArrays: false,
-    },
-  },
-  {
-    $project: {
-      idno: 1,
-      firstName: 1,
-      lastName: 1,
-      age: 1,
-      gender: 1,
-      phone: 1,
-      aadharnum: 1,
-      visitDate: "$visits.date",
-      billDate: "$visits.therapyBills.billDate",  // ✅ From therapyBills array
-      billNumber: "$visits.therapyBills.billNumber",  // ✅ From therapyBills array
-      therapies: "$visits.therapyBills.therapies",  // ✅ Array of therapy names
-      therapyWithAmount: "$visits.therapyWithAmount",  // ✅ Keep for amount lookup
-    },
-  },
-]);
+    // ──────────────────────────────────────────────────────────
+    // PATH A: New visits — have therapyBills[] entries
+    // ──────────────────────────────────────────────────────────
+    const newVisitResults = await patientModel.aggregate(
+      [
+        {
+          $lookup: {
+            from: "visits",
+            localField: "_id",
+            foreignField: "patientId",
+            as: "visits",
+          },
+        },
+        { $unwind: { path: "$visits", preserveNullAndEmptyArrays: false } },
+        // Only visits that have at least one therapyBills entry
+        {
+          $match: {
+            "visits.therapyBills.0": { $exists: true },
+          },
+        },
+        // Unwind the bills array — one doc per bill
+        {
+          $unwind: {
+            path: "$visits.therapyBills",
+            preserveNullAndEmptyArrays: false,
+          },
+        },
+        {
+          $project: {
+            idno: 1,
+            firstName: 1,
+            lastName: 1,
+            age: 1,
+            gender: 1,
+            phone: 1,
+            aadharnum: 1,
+            visitDate: "$visits.date",
+            billDate: "$visits.therapyBills.billDate",
+            billNumber: "$visits.therapyBills.billNumber",
+            therapies: "$visits.therapyBills.therapies",
+            therapyWithAmount: "$visits.therapyWithAmount",
+            visitTherapies: "$visits.therapies", // for amount fallback
+          },
+        },
+      ],
+      { allowDiskUse: true }
+    );
 
-    console.log(`📦 Total therapy records from DB: ${results.length}`);
+    // ──────────────────────────────────────────────────────────
+    // PATH B: Old visits — have therapies[] but NO therapyBills
+    // ──────────────────────────────────────────────────────────
+    const oldVisitResults = await patientModel.aggregate(
+      [
+        {
+          $lookup: {
+            from: "visits",
+            localField: "_id",
+            foreignField: "patientId",
+            as: "visits",
+          },
+        },
+        { $unwind: { path: "$visits", preserveNullAndEmptyArrays: false } },
+        // Only visits WITHOUT any therapyBills
+        {
+          $match: {
+            "visits.therapyBills.0": { $exists: false },
+            "visits.therapies.0": { $exists: true }, // must have therapies
+          },
+        },
+        { $unwind: { path: "$visits.therapies", preserveNullAndEmptyArrays: false } },
+        {
+          $match: {
+            "visits.therapies.name": { $exists: true, $ne: "" },
+          },
+        },
+        {
+          $project: {
+            idno: 1,
+            firstName: 1,
+            lastName: 1,
+            age: 1,
+            gender: 1,
+            phone: 1,
+            aadharnum: 1,
+            visitDate: "$visits.date",
+            billDate: "$visits.date",       // use visit date as bill date
+            billNumber: { $literal: "Legacy" },
+            therapies: ["$visits.therapies.name"], // wrap single name in array
+            therapyWithAmount: "$visits.therapyWithAmount",
+            visitTherapies: "$visits.therapies",
+            therapyAmount: "$visits.therapies.amount", // direct amount from schema
+          },
+        },
+      ],
+      { allowDiskUse: true }
+    );
 
-    // ✅ FIXED: Parse visit dates with universal parser
-   const filteredRows = results.filter((record) => {
-  // ✅ Check if ANY therapy on this bill matches selected therapies
-  const billTherapies = record.therapies || [];
-  if (billTherapies.length === 0) {
-    console.log("⚠️ Record missing therapies:", record.idno);
-    return false;
-  }
-  
-  // Check if at least one therapy matches
-  const hasMatchingTherapy = billTherapies.some(therapyName => {
-    const normalizedName = therapyName?.trim().toLowerCase();
-    return normalizedName && selectedTherapies.includes(normalizedName);
-  });
-  
-  if (!hasMatchingTherapy) {
-    return false;
-  }
+    console.log(`📦 New-visit records: ${newVisitResults.length}, Old-visit records: ${oldVisitResults.length}`);
 
-  // ✅ Check date range using BILL DATE
-  const dateToCheck = record.billDate || record.visitDate;
-  if (!dateToCheck) {
-    console.log("⚠️ Record missing date:", record.idno);
-    return false;
-  }
+    // ──────────────────────────────────────────────────────────
+    // COMBINE + FILTER
+    // ──────────────────────────────────────────────────────────
+    const allResults = [...newVisitResults, ...oldVisitResults];
 
-  try {
-    const checkDate = parseDate(dateToCheck);
-    if (!checkDate || isNaN(checkDate.getTime())) {
-      console.log("⚠️ Invalid date format:", dateToCheck);
-      return false;
-    }
-    
-    checkDate.setHours(0, 0, 0, 0);
-    return checkDate >= fromDate && checkDate <= toDate;
-  } catch (e) {
-    console.error("❌ Date parse error:", dateToCheck, e);
-    return false;
-  }
-});
+    const filteredRows = allResults.filter((record) => {
+      // Must have at least one matching therapy
+      const billTherapies = record.therapies || [];
+      if (billTherapies.length === 0) return false;
 
-    console.log(`✅ Filtered therapy records: ${filteredRows.length}`);
+      const hasMatch = billTherapies.some(
+        (tName) =>
+          tName &&
+          selectedTherapies.includes(tName.trim().toLowerCase())
+      );
+      if (!hasMatch) return false;
+
+      // Must fall within date range
+      const dateStr = record.billDate || record.visitDate;
+      if (!dateStr) return false;
+
+      const checkDate = parseDate(dateStr);
+      if (!checkDate || isNaN(checkDate.getTime())) return false;
+
+      checkDate.setHours(0, 0, 0, 0);
+      return checkDate >= fromDate && checkDate <= toDate;
+    });
+
+    console.log(`✅ Filtered rows: ${filteredRows.length}`);
 
     if (filteredRows.length === 0) {
       return res.status(404).json({
@@ -2965,7 +3002,50 @@ const results = await patientModel.aggregate([
       });
     }
 
-    // Generate Excel
+    // ──────────────────────────────────────────────────────────
+    // BUILD EXCEL ROWS
+    // ──────────────────────────────────────────────────────────
+    const rows = filteredRows.map((record) => {
+      const billTherapies = (record.therapies || []).filter(
+        (tName) =>
+          tName && selectedTherapies.includes(tName.trim().toLowerCase())
+      );
+
+      // Amount lookup: try therapyWithAmount first, then visitTherapies.amount
+      const totalAmount = billTherapies.reduce((sum, tName) => {
+        // Check therapyWithAmount (payment received)
+        const withAmountEntry = record.therapyWithAmount?.find(
+          (t) => t.name?.trim().toLowerCase() === tName.trim().toLowerCase()
+        );
+        if (withAmountEntry?.receivedAmount) {
+          return sum + Number(withAmountEntry.receivedAmount);
+        }
+        // Fallback: direct amount stored in therapies array (old visits)
+        if (record.therapyAmount !== undefined) {
+          return sum + Number(record.therapyAmount || 0);
+        }
+        return sum;
+      }, 0);
+
+      return {
+        idno: record.idno || "",
+        billNumber: record.billNumber || "N/A",
+        name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+        age: record.age || "",
+        gender: record.gender || "",
+        phone: record.phone || "",
+        aadharnum: record.aadharnum
+          ? record.aadharnum.toString().padStart(12, "0")
+          : "",
+        therapyname: billTherapies.join(", "),
+        therapyamount: totalAmount,
+        date: record.billDate || record.visitDate || "",
+      };
+    });
+
+    // ──────────────────────────────────────────────────────────
+    // GENERATE EXCEL
+    // ──────────────────────────────────────────────────────────
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Therapy Report");
 
@@ -2982,15 +3062,10 @@ const results = await patientModel.aggregate([
       { header: "Date", key: "date", width: 15 },
     ];
 
-    // Style header
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, size: 12 };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFFF00" },
-      };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF00" } };
       cell.alignment = { horizontal: "center", vertical: "middle" };
       cell.border = {
         top: { style: "thin" },
@@ -3000,32 +3075,8 @@ const results = await patientModel.aggregate([
       };
     });
 
-    // Add rows
-    const rows = filteredRows.map((record) => {
-  // ✅ Calculate total amount for this bill
-  const billTherapies = record.therapies || [];
-  const totalAmount = billTherapies.reduce((sum, therapyName) => {
-    const therapy = record.therapyWithAmount?.find(t => t.name === therapyName);
-    return sum + (Number(therapy?.receivedAmount) || 0);
-  }, 0);
-
-  return {
-    idno: record.idno || "",
-    billNumber: record.billNumber || "N/A",
-    name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
-    age: record.age || "",
-    gender: record.gender || "",
-    phone: record.phone || "",
-    aadharnum: record.aadharnum ? record.aadharnum.toString().padStart(12, "0") : "",
-    therapyname: billTherapies.join(", "),  // ✅ All therapies on this bill
-    therapyamount: totalAmount,  // ✅ Total amount for this bill
-    date: record.billDate || record.visitDate,
-  };
-});
-
     worksheet.addRows(rows);
 
-    // Center align data
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber > 1) {
         row.eachCell((cell) => {
@@ -3040,20 +3091,15 @@ const results = await patientModel.aggregate([
       }
     });
 
-    console.log("✅ Excel generated successfully");
+    console.log("✅ Therapy Excel generated successfully");
 
     const buffer = await workbook.xlsx.writeBuffer();
-
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename=Therapy_Report_${new Date().toISOString().split("T")[0]}.xlsx`
     );
-    res.setHeader('Content-Length', buffer.length);
-
+    res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
   } catch (error) {
     console.error("❌ Error exporting therapy report:", error);
@@ -3828,51 +3874,202 @@ const updatePatientDetails = async (req, res) => {
 
 const getTherapyPatients = async (req, res) => {
   try {
-    const results = await patientModel.aggregate([
-      {
-        $lookup: {
-          from: "visits",
-          localField: "_id",
-          foreignField: "patientId",
-          as: "visits",
+    const results = await patientModel.aggregate(
+      [
+        // Step 1: join visits
+        {
+          $lookup: {
+            from: "visits",
+            localField: "_id",
+            foreignField: "patientId",
+            as: "visits",
+          },
         },
-      },
-      { $unwind: { path: "$visits", preserveNullAndEmptyArrays: false } },
-      { $unwind: { path: "$visits.therapies", preserveNullAndEmptyArrays: false } },
-      {
-        $match: {
-          "visits.therapies.name": { $exists: true, $ne: "" },
+        // Step 2: one doc per visit
+        { $unwind: { path: "$visits", preserveNullAndEmptyArrays: false } },
+        // Step 3: one doc per therapy inside that visit
+        { $unwind: { path: "$visits.therapies", preserveNullAndEmptyArrays: false } },
+        // Step 4: only visits that actually have a named therapy
+        {
+          $match: {
+            "visits.therapies.name": { $exists: true, $ne: "" },
+          },
         },
-      },
-      {
-        $project: {
-          _id: 1,
-          idno: 1,
-          firstName: 1,
-          lastName: 1,
-          age: 1,
-          gender: 1,
-          phone: 1,
-          city: 1,
-          state: 1,
-          appointment: "$visits.appointment",
-          department: "$visits.department",
-          sponsor: "$visits.sponsor",
-          date: "$visits.date",
-          consultationamount: "$visits.consultationamount",
-          prakritiparikshanamount: "$visits.prakritiparikshanamount",
-          therapyname: "$visits.therapies.name",
-          therapyamount: "$visits.therapies.amount",
-          visitId: "$visits._id",
+        // Step 5: project fields we need
+        {
+          $project: {
+            _id: 1,
+            idno: 1,
+            firstName: 1,
+            lastName: 1,
+            age: 1,
+            gender: 1,
+            phone: 1,
+            email: 1,
+            city: 1,
+            state: 1,
+            appointment: "$visits.appointment",
+            department: "$visits.department",
+            sponsor: "$visits.sponsor",
+            date: "$visits.date",
+            visitCreatedAt: "$visits.createdAt",   // ✅ real Date for sorting
+            consultationamount: "$visits.consultationamount",
+            prakritiparikshanamount: "$visits.prakritiparikshanamount",
+            therapyname: "$visits.therapies.name",
+            therapyamount: "$visits.therapies.amount",
+            visitId: "$visits._id",
+
+            // ✅ NEW: pull the most recent bill number from therapyBills array
+            // for display on the card badge.
+            // If therapyBills is empty/missing (old visit), this will be null.
+            latestBillNumber: {
+              $let: {
+                vars: {
+                  bills: {
+                    $ifNull: ["$visits.therapyBills", []],
+                  },
+                },
+                in: {
+                  $arrayElemAt: [
+                    {
+                      $map: {
+                        input: {
+                          $filter: {
+                            input: "$$bills",
+                            as: "b",
+                            cond: {
+                              $in: [
+                                "$visits.therapies.name",
+                                { $ifNull: ["$$b.therapies", []] },
+                              ],
+                            },
+                          },
+                        },
+                        as: "matchedBill",
+                        in: "$$matchedBill.billNumber",
+                      },
+                    },
+                    -1, // last element = most recent
+                  ],
+                },
+              },
+            },
+          },
         },
-      },
-    ]);
+        // Step 6: sort newest visit first using real Date field
+        { $sort: { visitCreatedAt: -1 } },
+      ],
+      { allowDiskUse: true }
+    );
 
     res.status(200).json({ status: 1, data: results });
   } catch (err) {
-    res.status(500).json({ status: 0, message: "Error fetching therapy patients", error: err.message });
+    console.error("Error fetching therapy patients:", err);
+    res.status(500).json({
+      status: 0,
+      message: "Error fetching therapy patients",
+      error: err.message,
+    });
   }
 };
+
+
+const deleteTherapyFromVisit = async (req, res) => {
+  try {
+    const { visitId } = req.params;
+    const { therapyname } = req.body;
+
+    if (!visitId || !therapyname) {
+      return res.status(400).json({
+        status: 0,
+        message: "visitId and therapyname are required",
+      });
+    }
+
+    const visit = await visitModel.findById(visitId);
+    if (!visit) {
+      return res.status(404).json({ status: 0, message: "Visit not found" });
+    }
+
+    // Case-insensitive match so "PPS Sweda" === "pps sweda"
+    const normalizedTarget = therapyname.trim().toLowerCase();
+
+    const therapyExists = visit.therapies.some(
+      (t) => t.name.trim().toLowerCase() === normalizedTarget
+    );
+    if (!therapyExists) {
+      return res.status(404).json({
+        status: 0,
+        message: `Therapy "${therapyname}" not found in this visit`,
+      });
+    }
+
+    // ── 1. Remove from visit.therapies ──────────────────────────
+    visit.therapies = visit.therapies.filter(
+      (t) => t.name.trim().toLowerCase() !== normalizedTarget
+    );
+
+    // ── 2. Remove from visit.therapyWithAmount ───────────────────
+    if (visit.therapyWithAmount && visit.therapyWithAmount.length > 0) {
+      visit.therapyWithAmount = visit.therapyWithAmount.filter(
+        (t) => t.name.trim().toLowerCase() !== normalizedTarget
+      );
+    }
+
+    // ── 3. Remove from visit.discounts.therapies ─────────────────
+    if (visit.discounts?.therapies && visit.discounts.therapies.length > 0) {
+      visit.discounts.therapies = visit.discounts.therapies.filter(
+        (t) => t.name.trim().toLowerCase() !== normalizedTarget
+      );
+      visit.markModified("discounts");
+    }
+
+    // ── 4. ✅ NEW: Remove from visit.therapyBills[].therapies ─────
+    //   This is what makes the deletion reflect in reports.
+    if (visit.therapyBills && visit.therapyBills.length > 0) {
+      // Remove the therapy name from every bill entry
+      visit.therapyBills = visit.therapyBills
+        .map((bill) => {
+          const updatedTherapies = (bill.therapies || []).filter(
+            (tName) => tName.trim().toLowerCase() !== normalizedTarget
+          );
+          return {
+            _id: bill._id,
+            billNumber: bill.billNumber,
+            billDate: bill.billDate,
+            therapies: updatedTherapies,
+            createdAt: bill.createdAt,
+          };
+        })
+        // Drop any bill entry that now has zero therapies
+        .filter((bill) => bill.therapies.length > 0);
+
+      visit.markModified("therapyBills");
+    }
+
+    await visit.save();
+
+    console.log(
+      `✅ Therapy "${therapyname}" deleted from visit ${visitId}. ` +
+        `Remaining therapies: ${visit.therapies.length}, ` +
+        `Remaining bill entries: ${visit.therapyBills?.length ?? 0}`
+    );
+
+    res.status(200).json({
+      status: 1,
+      message: `Therapy "${therapyname}" deleted successfully`,
+      remainingTherapies: visit.therapies.length,
+    });
+  } catch (err) {
+    console.error("Error deleting therapy from visit:", err);
+    res.status(500).json({
+      status: 0,
+      message: "Error deleting therapy",
+      error: err.message,
+    });
+  }
+};
+
 
 
 module.exports = {
@@ -3905,5 +4102,6 @@ module.exports = {
   exportDiscountWiseReport,
   importBulkPatientData,
   getTherapyPatients,
+  deleteTherapyFromVisit,
   updatePatientDetails
 };
