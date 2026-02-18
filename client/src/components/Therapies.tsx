@@ -103,82 +103,16 @@ interface VisitsApiResponse {
   data: PatientVisit[];
 }
 
+// ✅ NEW: Single API call — replaces the old N+1 loop
 const fetchPatientRecords = async (): Promise<PatientRecord[]> => {
-  try {
-    console.log("Fetching basic patient records...");
-
-    const patientsResponse = await fetch(
-      `${API_BASE_URL}/api/website/enquiry/view`
-    );
-
-    if (!patientsResponse.ok) {
-      throw new Error(`HTTP error fetching patients! status: ${patientsResponse.status}`);
-    }
-
-    const patientsData: BasicApiResponse = await patientsResponse.json();
-    console.log("Basic patients fetched:", patientsData.enquiryList.length);
-
-    const patientRecordsWithTherapy: PatientRecord[] = [];
-
-    for (const patient of patientsData.enquiryList) {
-      try {
-        console.log(`Fetching visits for patient ${patient.idno}...`);
-
-        const visitsResponse = await fetch(
-          `${API_BASE_URL}/api/website/enquiry/patient-visits/${patient._id}`
-        );
-
-        if (!visitsResponse.ok) {
-          console.warn(`Failed to fetch visits for patient ${patient.idno}`);
-          continue;
-        }
-
-        const visitsData: VisitsApiResponse = await visitsResponse.json();
-        console.log(`Visits for ${patient.idno}:`, visitsData.data.length);
-
-        // Find visits that have at least one therapy in the array
-        const therapyVisits = visitsData.data.filter(
-          (visit) => Array.isArray(visit.therapies) && visit.therapies.length > 0
-        );
-
-        for (const visit of therapyVisits) {
-          for (const therapy of visit.therapies) {
-            const patientWithTherapy: PatientRecord = {
-              ...patient,
-              appointment: visit.appointment,
-              department: visit.department,
-              sponsor: visit.sponsor,
-              date: visit.date,
-              consultationamount: visit.consultationamount,
-              prakritiparikshanamount: visit.prakritiparikshanamount,
-              therapyamount: therapy.amount,
-              therapyname: therapy.name,
-              visitId: visit._id,
-            };
-
-            patientRecordsWithTherapy.push(patientWithTherapy);
-            console.log(
-              `Added patient ${patient.idno} with therapy: ${therapy.name}`
-            );
-          }
-        }
-      } catch (visitError) {
-        console.error(
-          `Error fetching visits for patient ${patient.idno}:`,
-          visitError
-        );
-      }
-    }
-
-    console.log(
-      "Total patients with therapy:",
-      patientRecordsWithTherapy.length
-    );
-    return patientRecordsWithTherapy;
-  } catch (error) {
-    console.error("Error in fetchPatientRecords:", error);
-    throw error;
+  const response = await fetch(
+    `${API_BASE_URL}/api/website/enquiry/therapy-patients`
+  );
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
   }
+  const data = await response.json();
+  return data.data as PatientRecord[];
 };
 
 
@@ -191,11 +125,11 @@ const Therapies = () => {
     data: records = [],
     isLoading,
     error,
-    refetch,
   } = useQuery({
     queryKey: ["patientRecords"],
     queryFn: fetchPatientRecords,
     enabled: currentView === "records",
+    staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
 
@@ -679,20 +613,20 @@ const Therapies = () => {
     return matchesSearch;
   });
 
-  const filteredPatientRecords = records.filter((record) => {
-    if (!patientSearchTerm.trim()) return false;
+  // AFTER — safe null checks on every optional field:
+const filteredPatientRecords = records.filter((record) => {
+  if (!patientSearchTerm.trim()) return false;
 
-    const searchLower = patientSearchTerm.toLowerCase();
-    return (
-      record.firstName.toLowerCase().includes(searchLower) ||
-      record.lastName.toLowerCase().includes(searchLower) ||
-      record.idno.toLowerCase().includes(searchLower) ||
-      (record.therapyname &&
-        record.therapyname.toLowerCase().includes(searchLower)) ||
-      record.phone.toString().includes(searchLower) ||
-      record.email.toLowerCase().includes(searchLower)
-    );
-  });
+  const searchLower = patientSearchTerm.toLowerCase();
+  return (
+    (record.firstName ?? "").toLowerCase().includes(searchLower) ||
+    (record.lastName ?? "").toLowerCase().includes(searchLower) ||
+    (record.idno ?? "").toLowerCase().includes(searchLower) ||
+    (record.therapyname ?? "").toLowerCase().includes(searchLower) ||
+    (record.phone?.toString() ?? "").includes(searchLower) ||
+    (record.email ?? "").toLowerCase().includes(searchLower)
+  );
+});
 
   if (currentView === "records") {
     return (
@@ -923,11 +857,8 @@ const Therapies = () => {
           {/* Patient Records Button */}
           <Button
             onClick={() => {
-              setCurrentView("records");
-              if (!records.length && !isLoading) {
-                refetch();
-              }
-            }}
+  setCurrentView("records");  // ✅ React Query auto-fetches when enabled becomes true
+}}
             className="bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold py-4 px-8 rounded-2xl transition-all duration-300 shadow-xl hover:shadow-2xl hover:scale-105 flex items-center space-x-3"
           >
             <Users className="h-5 w-5" />
