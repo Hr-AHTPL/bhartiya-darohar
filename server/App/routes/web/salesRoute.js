@@ -5,15 +5,15 @@ const {
   getSaleById,
   updateSale,
   deleteSale,
-  generateSaleReport 
+  generateSaleReport,
+  downloadUpdatedBill // ✅ NEW
 } = require('../../controllers/web/saleController');
 
-// ✅ Import your existing auth middleware (enhanced version)
 const { ensureAuthenticated, ensureAdmin, attachUserRole } = require('../../middleware/auth');
 
 const salesRouter = express.Router();
 
-// Public/Basic routes (keep as they were)
+// Public/Basic routes
 salesRouter.post('/record', recordSale);
 salesRouter.get('/view', getAllSales);
 salesRouter.get('/report', generateSaleReport);
@@ -21,8 +21,11 @@ salesRouter.get('/:id', getSaleById);
 
 // ✅ PROTECTED ROUTES WITH ROLE-BASED ACCESS
 
-// UPDATE route - requires authentication, all authenticated users can update
+// UPDATE route - requires authentication
 salesRouter.put('/:id', ensureAuthenticated, attachUserRole, updateSale);
+
+// ✅ NEW: Download updated bill - requires authentication
+salesRouter.get('/:id/download-bill', ensureAuthenticated, downloadUpdatedBill);
 
 // DELETE route - requires authentication AND admin role
 salesRouter.delete('/:id', ensureAuthenticated, ensureAdmin, deleteSale);
