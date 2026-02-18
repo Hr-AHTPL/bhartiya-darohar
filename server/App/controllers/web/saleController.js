@@ -4,6 +4,253 @@ const ExcelJS = require('exceljs');
 
 const { generateBillNumber } = require('../../utils/billNumberGenerator');
 
+// ✅ NEW: Generate Excel Bill matching your existing format
+const generateExcelBill = async (saleId) => {
+  try {
+    // Fetch the sale
+    const sale = await saleModel.findById(saleId);
+    if (!sale) {
+      throw new Error('Sale not found');
+    }
+
+    const invoiceNumber = sale.billNumber || 'DRAFT';
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Sale Receipt", {
+      pageSetup: { 
+        paperSize: 9, 
+        orientation: "portrait",
+        fitToPage: true,
+        fitToHeight: 1,
+        fitToWidth: 1,
+      },
+    });
+
+    // Function to generate a single bill starting at a specific row
+    const generateBill = (startRow) => {
+      let rowIdx = startRow;
+
+      // -------------------- Clinic Header --------------------
+      const headerStyle = {
+        alignment: { horizontal: "center" },
+        font: { bold: true, size: 14 },
+      };
+
+      worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
+      worksheet.getCell(`A${rowIdx}`).value = "IMMUNITY CLINIC";
+      Object.assign(worksheet.getCell(`A${rowIdx}`), headerStyle);
+      rowIdx++;
+
+      worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
+      worksheet.getCell(`A${rowIdx}`).value =
+        "D-76, Ground Floor, besides LPS GLOBAL SCHOOL, BI";
+      worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
+      rowIdx++;
+
+      worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
+      worksheet.getCell(`A${rowIdx}`).value =
+        "Phone: 0120-4026100, 9625963298 | Email: immunityclinic0@gmail.com";
+      worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
+      rowIdx++;
+
+      worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
+      worksheet.getCell(`A${rowIdx}`).value =
+        "Reg No: 64793/2020 | GSTIN: 09AAJFI9867J1ZH";
+      worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
+      rowIdx++;
+
+      worksheet.addRow([]);
+      rowIdx++;
+
+      // -------------------- Invoice & Patient Info --------------------
+      const invoiceRow = worksheet.addRow([
+        "Invoice No:",
+        invoiceNumber,
+        "",
+        "",
+        "Sale Date:",
+        sale.saleDate,
+      ]);
+      invoiceRow.getCell(1).alignment = { horizontal: "left" };
+      invoiceRow.getCell(2).alignment = { horizontal: "left" };
+      invoiceRow.getCell(5).alignment = { horizontal: "left" };
+      invoiceRow.getCell(6).alignment = { horizontal: "left" };
+      rowIdx++;
+
+      worksheet.addRow([
+        "Patient ID:",
+        sale.patientId,
+        "",
+        "",
+        "Patient Name:",
+        sale.patientName,
+      ]);
+      rowIdx++;
+
+      worksheet.addRow([]);
+      rowIdx++;
+
+      // -------------------- Medicine Table Header --------------------
+      const headerRow = worksheet.addRow([
+        "S.No",
+        "Medicine Name",
+        "Batch",
+        "HSN",
+        "Expiry",
+        "Price/Unit",
+        "Qty",
+        "Total",
+      ]);
+
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF8800" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
+      rowIdx++;
+
+      // -------------------- Medicine Data --------------------
+      sale.medicines.forEach((med, index) => {
+        const row = worksheet.addRow([
+          index + 1,
+          med.medicineName,
+          med.batch || '',
+          med.hsn || '',
+          med.expiry || '',
+          med.pricePerUnit,
+          med.quantity,
+          med.totalPrice,
+        ]);
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center" };
+          cell.border = {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          };
+        });
+        rowIdx++;
+      });
+
+      worksheet.addRow([]);
+      rowIdx++;
+
+      // -------------------- Totals --------------------
+      const addTotalRow = (label, value) => {
+        const row = worksheet.addRow(["", "", "", "", "", label, "", value]);
+        row.eachCell((cell, colNumber) => {
+          if (colNumber >= 6) {
+            cell.font = { bold: true };
+            cell.alignment = { horizontal: "center" };
+            cell.border = {
+              top: { style: "thin" },
+              left: { style: "thin" },
+              bottom: { style: "thin" },
+              right: { style: "thin" },
+            };
+          }
+        });
+        rowIdx++;
+      };
+
+      addTotalRow("Subtotal (₹):", sale.subtotal.toFixed(2));
+
+      const discountPercent = parseFloat(sale.discount) || 0;
+      const discountAmount = (sale.subtotal * discountPercent) / 100;
+
+      if (discountPercent > 0) {
+        addTotalRow(`Discount ${discountPercent}%:`, `- ₹${discountAmount.toFixed(2)}`);
+      }
+
+      const afterDiscount = sale.subtotal - discountAmount;
+      const sgst = sale.sgst || (sale.subtotal * 0.025);
+      const cgst = sale.cgst || (sale.subtotal * 0.025);
+
+      addTotalRow("SGST 2.5%:", `₹${sgst.toFixed(2)}`);
+      addTotalRow("CGST 2.5%:", `₹${cgst.toFixed(2)}`);
+
+      const roundoff = sale.totalAmount - (afterDiscount + sgst + cgst);
+      addTotalRow("Roundoff:", `₹${roundoff.toFixed(2)}`);
+
+      addTotalRow("GRAND TOTAL:", `₹${sale.totalAmount.toFixed(2)}`);
+
+      // -------------------- Social Media Links (Bottom Left) --------------------
+      rowIdx += 2; // Add spacing
+      
+      const socialHeaderRow = worksheet.addRow(["Also Follow Us On:"]);
+      socialHeaderRow.getCell(1).font = { bold: true, size: 11 };
+      socialHeaderRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
+      rowIdx++;
+
+      const instaRow = worksheet.addRow(["Instagram: https://www.instagram.com/clinicimmunity?igsh=YnhobzRyNTEwOXV5"]);
+      instaRow.getCell(1).font = { size: 10, color: { argb: "FF000000" }, underline: false };
+      instaRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
+      rowIdx++;
+
+      const fbRow = worksheet.addRow(["Facebook: https://www.facebook.com/share/p/1Fjjh1KvJi/"]);
+      fbRow.getCell(1).font = { size: 10, color: { argb: "FF000000" }, underline: false };
+      fbRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
+      rowIdx++;
+
+      return rowIdx;
+    };
+
+    // -------------------- Generate First Bill --------------------
+    let currentRow = generateBill(1);
+
+    // -------------------- Add Separator --------------------
+    currentRow += 2;
+    worksheet.addRow([]);
+    currentRow++;
+    
+    // Add dashed line separator
+    worksheet.mergeCells(`A${currentRow}:H${currentRow}`);
+    const separatorCell = worksheet.getCell(`A${currentRow}`);
+    separatorCell.value = "✂️ ------------------------------------------------- CUT HERE ------------------------------------------------- ✂️";
+    separatorCell.alignment = { horizontal: "center" };
+    separatorCell.font = { bold: true, size: 10 };
+    currentRow++;
+    
+    worksheet.addRow([]);
+    currentRow += 2;
+
+    // -------------------- Generate Second Bill (Duplicate) --------------------
+    generateBill(currentRow);
+
+    // -------------------- Set Column Widths --------------------
+    worksheet.columns = [
+      { key: "sno", width: 10 },
+      { key: "medicineName", width: 30 },
+      { key: "batch", width: 12 },
+      { key: "hsn", width: 10 },
+      { key: "expiry", width: 15 },
+      { key: "pricePerUnit", width: 15 },
+      { key: "quantity", width: 6 },
+      { key: "total", width: 12 },
+    ];
+
+    // -------------------- Return Buffer --------------------
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer;
+
+  } catch (error) {
+    console.error('Error generating Excel bill:', error);
+    throw error;
+  }
+};
+
+// ✅ EXISTING: Record Sale
 const recordSale = async (req, res) => {
   try {
     const {
@@ -44,10 +291,10 @@ const recordSale = async (req, res) => {
     const cgst = subtotal * 0.025;
     const discountAmount = (subtotal * discount) / 100;
     const subtotalAfterDiscount = subtotal - discountAmount;
-    const totalAmount = Math.round(subtotalAfterDiscount);
+    const totalAmount = Math.round(subtotalAfterDiscount + sgst + cgst);
 
     const sale = new saleModel({
-      billNumber,          // ✅ NEW
+      billNumber,
       patientId,
       patientName,
       saleDate,
@@ -69,9 +316,10 @@ const recordSale = async (req, res) => {
   }
 };
 
+// ✅ EXISTING: Get All Sales
 const getAllSales = async (req, res) => {
   try {
-    const sales = await saleModel.find().sort({ saleDate: -1 }); // newest first
+    const sales = await saleModel.find().sort({ saleDate: -1 });
     res.status(200).json({ success: true, sales });
   } catch (error) {
     console.error('Error fetching sales:', error);
@@ -79,7 +327,7 @@ const getAllSales = async (req, res) => {
   }
 };
 
-// ✅ NEW: Get single sale by ID
+// ✅ EXISTING: Get Single Sale
 const getSaleById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -96,7 +344,7 @@ const getSaleById = async (req, res) => {
   }
 };
 
-// ✅ NEW: Update sale
+// ✅ MODIFIED: Update Sale with Bill Generation
 const updateSale = async (req, res) => {
   try {
     const { id } = req.params;
@@ -169,7 +417,7 @@ const updateSale = async (req, res) => {
     const cgst = subtotal * 0.025;
     const discountAmount = (subtotal * discount) / 100;
     const subtotalAfterDiscount = subtotal - discountAmount;
-    const totalAmount = Math.round(subtotalAfterDiscount);
+    const totalAmount = Math.round(subtotalAfterDiscount + sgst + cgst);
 
     // Update sale
     existingSale.patientId = patientId;
@@ -185,19 +433,55 @@ const updateSale = async (req, res) => {
 
     await existingSale.save();
 
-    res.status(200).json({ message: 'Sale updated successfully', sale: existingSale });
+    res.status(200).json({ 
+      message: 'Sale updated successfully', 
+      sale: existingSale,
+      saleId: existingSale._id // Send the ID for bill download
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
-// ✅ NEW: Delete sale
+// ✅ NEW: Download Updated Bill (Excel format matching your existing format)
+const downloadUpdatedBill = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Generate the Excel bill
+    const excelBuffer = await generateExcelBill(id);
+
+    // Fetch sale for filename
+    // Fetch sale for filename
+    const sale = await saleModel.findById(id);
+    const billNumber = (sale.billNumber || sale.patientId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileName = `Updated_Invoice_${billNumber}_${new Date().getTime()}.xlsx`;
+
+// Set response headers
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=${fileName}`); // ✅ No quotes
+    res.setHeader('Content-Length', excelBuffer.length);
+
+    // Send the Excel file
+    res.send(excelBuffer);
+
+    console.log(`✅ Updated bill downloaded: ${fileName}`);
+  } catch (error) {
+    console.error('Error downloading updated bill:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download updated bill',
+      error: error.message
+    });
+  }
+};
+
+// ✅ EXISTING: Delete Sale
 const deleteSale = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Find the sale
     const sale = await saleModel.findById(id);
     if (!sale) {
       return res.status(404).json({ message: 'Sale not found' });
@@ -212,7 +496,6 @@ const deleteSale = async (req, res) => {
       }
     }
 
-    // Delete the sale
     await saleModel.findByIdAndDelete(id);
 
     res.status(200).json({ message: 'Sale deleted successfully' });
@@ -222,6 +505,7 @@ const deleteSale = async (req, res) => {
   }
 };
 
+// ✅ EXISTING: Generate Sale Report
 const generateSaleReport = async (req, res) => {
   try {
     const { dateFrom, dateTo, patientId, patientName } = req.query;
@@ -231,7 +515,6 @@ const generateSaleReport = async (req, res) => {
     // Build query
     let query = {};
     
-    // Date filter
     if (dateFrom && dateTo) {
       query.saleDate = {
         $gte: dateFrom,
@@ -239,25 +522,22 @@ const generateSaleReport = async (req, res) => {
       };
     }
     
-    // Patient ID filter
     if (patientId && patientId.trim() !== "") {
       query.patientId = { $regex: patientId, $options: 'i' };
     }
     
-    // Patient Name filter
     if (patientName && patientName.trim() !== "") {
       query.patientName = { $regex: patientName, $options: 'i' };
     }
 
-    // Fetch sales
-    const sales = await saleModel.find(query).sort({ saleDate: 1 }); // Sort by date ascending
+    const sales = await saleModel.find(query).sort({ saleDate: 1 });
     
     console.log(`Found ${sales.length} sales`);
     
     if (sales.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "No sales found for the given criteria"
+        message: "No sales found for the specified criteria"
       });
     }
 
@@ -267,49 +547,34 @@ const generateSaleReport = async (req, res) => {
 
     // Set column widths
     worksheet.columns = [
-      { key: 'saleDate', width: 12 },
-      { key: 'patientId', width: 15 },
-      { key: 'billNumber', width: 18 },
-      { key: 'patientName', width: 25 },
-      { key: 'medicineName', width: 30 },
-      { key: 'batch', width: 15 },
-      { key: 'hsn', width: 12 },
-      { key: 'expiry', width: 12 },
-      { key: 'quantity', width: 10 },
-      { key: 'pricePerUnit', width: 12 },
-      { key: 'medicineTotal', width: 12 },
+      { header: 'Date', key: 'saleDate', width: 12 },
+      { header: 'Patient ID', key: 'patientId', width: 15 },
+      { header: 'Bill No.', key: 'billNumber', width: 15 },
+      { header: 'Patient Name', key: 'patientName', width: 20 },
+      { header: 'Medicine', key: 'medicineName', width: 25 },
+      { header: 'Batch', key: 'batch', width: 12 },
+      { header: 'HSN', key: 'hsn', width: 12 },
+      { header: 'Expiry', key: 'expiry', width: 12 },
+      { header: 'Qty', key: 'quantity', width: 8 },
+      { header: 'Rate (₹)', key: 'pricePerUnit', width: 12 },
+      { header: 'Total (₹)', key: 'medicineTotal', width: 12 }
     ];
 
-    // Add main header row
-    const headerRow = worksheet.addRow([
-      'Date',
-      'Patient ID',
-      'Bill No.',
-      'Patient Name',
-      'Medicine Name',
-      'Batch No.',
-      'HSN',
-      'Expiry',
-      'Qty',
-      'Price/Unit',
-      'Total (₹)'
-    ]);
-
-    // Style header
-    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    // Header styling
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
     headerRow.fill = {
       type: 'pattern',
       pattern: 'solid',
-      fgColor: { argb: 'FF0066CC' } // Blue color for sales
+      fgColor: { argb: 'FF0066CC' }
     };
     headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
     headerRow.height = 25;
 
-    // Add data rows grouped by date and patient
+    // Add data rows
     let currentRowNumber = 2;
     let grandTotal = 0;
 
-    // Group sales by date
     const salesByDate = {};
     sales.forEach(sale => {
       const date = sale.saleDate;
@@ -319,12 +584,11 @@ const generateSaleReport = async (req, res) => {
       salesByDate[date].push(sale);
     });
 
-    // Process each date group
     Object.keys(salesByDate).sort().forEach((date, dateIndex) => {
       const dateSales = salesByDate[date];
       let dateTotal = 0;
 
-      // Add date separator row
+      // Date separator
       const dateSeparatorRow = worksheet.addRow([date, '', '', '', '', '', '', '', '', '']);
       dateSeparatorRow.font = { bold: true, size: 11, color: { argb: 'FF0066CC' } };
       dateSeparatorRow.fill = {
@@ -332,21 +596,19 @@ const generateSaleReport = async (req, res) => {
         pattern: 'solid',
         fgColor: { argb: 'FFE6F2FF' }
       };
-      worksheet.mergeCells(`A${currentRowNumber}:J${currentRowNumber}`);
+      worksheet.mergeCells(`A${currentRowNumber}:K${currentRowNumber}`);
       dateSeparatorRow.alignment = { horizontal: 'left', vertical: 'middle' };
       dateSeparatorRow.height = 22;
       currentRowNumber++;
 
-      // Process each sale for this date
       dateSales.forEach((sale, saleIndex) => {
         const medicines = sale.medicines || [];
         
         if (medicines.length === 0) {
-          console.warn(`⚠️ Sale ${sale._id} has no medicines`);
-          // Add a single row for sale without medicines
           const row = worksheet.addRow({
             saleDate: '',
             patientId: sale.patientId,
+            billNumber: sale.billNumber || 'N/A',
             patientName: sale.patientName || 'N/A',
             medicineName: 'No medicines recorded',
             batch: '-',
@@ -361,7 +623,6 @@ const generateSaleReport = async (req, res) => {
           row.height = 20;
           currentRowNumber++;
         } else {
-          // Add medicine rows for this sale
           medicines.forEach((medicine, medIndex) => {
             const row = worksheet.addRow({
               saleDate: medIndex === 0 ? '' : '',
@@ -377,11 +638,9 @@ const generateSaleReport = async (req, res) => {
               medicineTotal: (medicine.totalPrice || 0).toFixed(2)
             });
 
-            // Styling
             row.alignment = { horizontal: 'center', vertical: 'middle' };
             row.height = 20;
 
-            // Add borders
             row.eachCell((cell) => {
               cell.border = {
                 top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
@@ -395,11 +654,12 @@ const generateSaleReport = async (req, res) => {
           });
         }
 
-        // Add sale subtotal row
+        // Sale subtotal
         const saleTotal = sale.totalAmount || 0;
         const subtotalRow = worksheet.addRow({
           saleDate: '',
           patientId: '',
+          billNumber: '',
           patientName: '',
           medicineName: '',
           batch: '',
@@ -410,11 +670,11 @@ const generateSaleReport = async (req, res) => {
           medicineTotal: saleTotal.toFixed(2)
         });
 
-        // Show discount if applicable
         if (sale.discount > 0) {
           const discountRow = worksheet.addRow({
             saleDate: '',
             patientId: '',
+            billNumber: '',
             patientName: '',
             medicineName: '',
             batch: '',
@@ -422,9 +682,9 @@ const generateSaleReport = async (req, res) => {
             expiry: '',
             quantity: '',
             pricePerUnit: `Discount (${sale.discount}%):`,
-
+            medicineTotal: ''
           });
-          discountRow.font = { italic: true, size:8, color: { argb: 'FF666666' } };
+          discountRow.font = { italic: true, size: 8, color: { argb: 'FF666666' } };
           discountRow.alignment = { horizontal: 'right', vertical: 'middle' };
           currentRowNumber++;
         }
@@ -447,25 +707,15 @@ const generateSaleReport = async (req, res) => {
         dateTotal += saleTotal;
         currentRowNumber++;
 
-        // Add spacing between sales
         if (saleIndex < dateSales.length - 1) {
           worksheet.addRow([]);
           currentRowNumber++;
         }
       });
 
-      // Add date total row
+      // Date total
       const dateTotalRow = worksheet.addRow([
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        'Date Total:',
-        dateTotal.toFixed(2)
+        '', '', '', '', '', '', '', '', '', 'Date Total:', dateTotal.toFixed(2)
       ]);
 
       dateTotalRow.font = { bold: true, size: 11, color: { argb: 'FF0066CC' } };
@@ -487,38 +737,26 @@ const generateSaleReport = async (req, res) => {
       grandTotal += dateTotal;
       currentRowNumber++;
 
-      // Add spacing between dates
       if (dateIndex < Object.keys(salesByDate).length - 1) {
         worksheet.addRow([]);
         currentRowNumber++;
       }
     });
 
-    // Add grand total section
+    // Grand total
     worksheet.addRow([]);
     currentRowNumber++;
     
     const grandTotalRow = worksheet.addRow([
-      '',
-      '',
-      `Total Sales: ${sales.length}`,
-      '',
-      '',
-      '',
-      '',
-      '',
-      'Grand Total:',
-      grandTotal.toFixed(2)
+      '', '', `Total Sales: ${sales.length}`, '', '', '', '', '', '', 'Grand Total:', grandTotal.toFixed(2)
     ]);
 
     grandTotalRow.font = { bold: true, size: 10, color: { argb: 'FF0066CC' } };
     grandTotalRow.alignment = { horizontal: 'right', vertical: 'middle' };
     grandTotalRow.height = 30;
     
-    // Merge cells for grand total
-    worksheet.mergeCells(`C${currentRowNumber}:H${currentRowNumber}`);
+    worksheet.mergeCells(`C${currentRowNumber}:I${currentRowNumber}`);
 
-    // Style grand total row
     grandTotalRow.eachCell((cell) => {
       cell.border = {
         top: { style: 'double', color: { argb: 'FF0066CC' } },
@@ -531,7 +769,6 @@ const generateSaleReport = async (req, res) => {
       };
     });
 
-    // Generate buffer and send
     const buffer = await workbook.xlsx.writeBuffer();
     
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -543,7 +780,6 @@ const generateSaleReport = async (req, res) => {
     
   } catch (error) {
     console.error("❌ Error generating sales report:", error);
-    console.error("Error stack:", error.stack);
     res.status(500).json({
       success: false,
       message: "Failed to generate sales report",
@@ -552,12 +788,12 @@ const generateSaleReport = async (req, res) => {
   }
 };
 
-// Update the exports at the bottom of the file
 module.exports = { 
   recordSale, 
   getAllSales, 
   getSaleById,
   updateSale,
   deleteSale,
-  generateSaleReport 
+  generateSaleReport,
+  downloadUpdatedBill // ✅ NEW
 };
