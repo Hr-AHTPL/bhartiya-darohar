@@ -28,10 +28,12 @@ const {
   exportSponsorReport,
   exportDiscountWiseReport,
   importBulkPatientData,
+  getTherapyPatients,
   updatePatientDetails,
 } = require("../../controllers/web/patientController");
 
 let patientRouter = express.Router();
+patientRouter.get("/therapy-patients", getTherapyPatients); // add this
 patientRouter.patch("/update/:id", updatePatientDetails);
 patientRouter.post("/insert", patientDetailsInsert);
 patientRouter.post("/addvisit", addVisit);
