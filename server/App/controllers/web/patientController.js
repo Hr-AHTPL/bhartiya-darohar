@@ -3826,6 +3826,54 @@ const updatePatientDetails = async (req, res) => {
   }
 };
 
+const getTherapyPatients = async (req, res) => {
+  try {
+    const results = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      { $unwind: { path: "$visits", preserveNullAndEmptyArrays: false } },
+      { $unwind: { path: "$visits.therapies", preserveNullAndEmptyArrays: false } },
+      {
+        $match: {
+          "visits.therapies.name": { $exists: true, $ne: "" },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          city: 1,
+          state: 1,
+          appointment: "$visits.appointment",
+          department: "$visits.department",
+          sponsor: "$visits.sponsor",
+          date: "$visits.date",
+          consultationamount: "$visits.consultationamount",
+          prakritiparikshanamount: "$visits.prakritiparikshanamount",
+          therapyname: "$visits.therapies.name",
+          therapyamount: "$visits.therapies.amount",
+          visitId: "$visits._id",
+        },
+      },
+    ]);
+
+    res.status(200).json({ status: 1, data: results });
+  } catch (err) {
+    res.status(500).json({ status: 0, message: "Error fetching therapy patients", error: err.message });
+  }
+};
+
 
 module.exports = {
   patientDetailsInsert,
@@ -3856,5 +3904,6 @@ module.exports = {
   exportSponsorReport,
   exportDiscountWiseReport,
   importBulkPatientData,
+  getTherapyPatients,
   updatePatientDetails
 };
