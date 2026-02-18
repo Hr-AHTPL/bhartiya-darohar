@@ -186,7 +186,7 @@ const PatientForm = () => {
       const submitData = rawData;
 
       await axios.post(
-        "${API_BASE_URL}/api/website/enquiry/insert",
+        `${API_BASE_URL}/api/website/enquiry/insert`,
         submitData 
       );
       toast({
@@ -832,3 +832,4 @@ const PatientForm = () => {
 };
 
 export default PatientForm;
+
