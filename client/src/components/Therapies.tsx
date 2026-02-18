@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Activity, Heart, Calendar, Users } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { Activity, Heart, Calendar, Users, Trash2, AlertTriangle } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import API_BASE_URL from "@/config/api.config";
 
 export interface PatientRecord {
@@ -120,11 +119,19 @@ const Therapies = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentView, setCurrentView] = useState("therapies");
   const [patientSearchTerm, setPatientSearchTerm] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ visitId: string; therapyname: string; patientName: string } | null>(null);
+
+  const queryClient = useQueryClient();
+
+  // Login.tsx saves role as "userRole" in localStorage
+  const isAdmin = localStorage.getItem("userRole") === "admin";
 
   const {
     data: records = [],
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: ["patientRecords"],
     queryFn: fetchPatientRecords,
@@ -132,6 +139,39 @@ const Therapies = () => {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
+
+  // Delete a single therapy from a visit — admin only
+  const handleDeleteTherapy = async (visitId: string, therapyname: string) => {
+    setDeletingId(`${visitId}-${therapyname}`);
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(
+        `${API_BASE_URL}/api/website/enquiry/delete-therapy/${visitId}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: token || "",
+          },
+          body: JSON.stringify({ therapyname }),
+        }
+      );
+      if (!response.ok) {
+        const err = await response.json();
+        alert(`Failed to delete: ${err.message || "Unknown error"}`);
+        return;
+      }
+      // Remove card instantly from cache without full refetch
+      queryClient.setQueryData(["patientRecords"], (old: PatientRecord[] = []) =>
+        old.filter((r) => !(r.visitId === visitId && r.therapyname === therapyname))
+      );
+    } catch {
+      alert("Network error while deleting. Please try again.");
+    } finally {
+      setDeletingId(null);
+      setConfirmDelete(null);
+    }
+  };
 
   const therapiesData = [
     // Abhyangam therapies
@@ -613,7 +653,7 @@ const Therapies = () => {
     return matchesSearch;
   });
 
-  // AFTER — safe null checks on every optional field:
+  // Search by name or patient ID only:
 const filteredPatientRecords = records.filter((record) => {
   if (!patientSearchTerm.trim()) return false;
 
@@ -622,7 +662,6 @@ const filteredPatientRecords = records.filter((record) => {
     (record.firstName ?? "").toLowerCase().includes(searchLower) ||
     (record.lastName ?? "").toLowerCase().includes(searchLower) ||
     (record.idno ?? "").toLowerCase().includes(searchLower) ||
-    (record.therapyname ?? "").toLowerCase().includes(searchLower) ||
     (record.phone?.toString() ?? "").includes(searchLower) ||
     (record.email ?? "").toLowerCase().includes(searchLower)
   );
@@ -642,12 +681,19 @@ const filteredPatientRecords = records.filter((record) => {
               ← Back to Therapies
             </Button>
 
-            <Button
-              onClick={() => refetch()}
-              className="bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl"
-            >
-              Refresh Records
-            </Button>
+            <div className="flex items-center gap-3">
+              {isAdmin && (
+                <div className="text-xs font-bold bg-red-100 text-red-700 border border-red-200 px-3 py-1 rounded-full">
+                  Admin Mode — Delete Enabled
+                </div>
+              )}
+              <Button
+                onClick={() => refetch()}
+                className="bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl"
+              >
+                Refresh Records
+              </Button>
+            </div>
           </div>
 
           {/* Patient Search */}
@@ -700,19 +746,73 @@ const filteredPatientRecords = records.filter((record) => {
             </Card>
           )}
 
+          {/* Delete Confirmation Modal */}
+          {confirmDelete && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <Card className="bg-white border-0 shadow-2xl rounded-3xl max-w-md w-full">
+                <CardContent className="p-8 text-center">
+                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertTriangle className="h-8 w-8 text-red-500" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">Confirm Delete</h3>
+                  <p className="text-slate-600 mb-1">
+                    Delete <span className="font-bold text-orange-600">{confirmDelete.therapyname}</span>
+                  </p>
+                  <p className="text-slate-500 text-sm mb-6">
+                    for patient <span className="font-semibold">{confirmDelete.patientName}</span>?
+                    <br />This action cannot be undone.
+                  </p>
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={() => setConfirmDelete(null)}
+                      variant="outline"
+                      className="flex-1 border-2 border-slate-200 text-slate-600 rounded-2xl"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => handleDeleteTherapy(confirmDelete.visitId, confirmDelete.therapyname)}
+                      disabled={deletingId === `${confirmDelete.visitId}-${confirmDelete.therapyname}`}
+                      className="flex-1 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold rounded-2xl"
+                    >
+                      {deletingId ? "Deleting..." : "Delete"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* Records Display - Only show when search term exists */}
           {!isLoading &&
             !error &&
             patientSearchTerm.trim() &&
             filteredPatientRecords.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredPatientRecords.map((record) => (
+                {filteredPatientRecords.map((record, index) => (
                   <Card
-                    key={record._id}
-                    className="bg-white/70 backdrop-blur-md border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 rounded-3xl"
+                    key={`${record.visitId}-${record.therapyname}-${index}`}
+                    className="bg-white/70 backdrop-blur-md border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 rounded-3xl relative"
                   >
+                    {/* Admin-only delete button */}
+                    {isAdmin && (
+                      <button
+                        onClick={() =>
+                          setConfirmDelete({
+                            visitId: record.visitId || "",
+                            therapyname: record.therapyname || "",
+                            patientName: `${record.firstName ?? ""} ${record.lastName ?? ""}`.trim(),
+                          })
+                        }
+                        className="absolute top-3 right-3 w-8 h-8 bg-red-50 hover:bg-red-100 border border-red-200 rounded-full flex items-center justify-center transition-colors group z-10"
+                        title="Delete this therapy record"
+                      >
+                        <Trash2 className="h-4 w-4 text-red-400 group-hover:text-red-600" />
+                      </button>
+                    )}
+
                     <CardHeader className="pb-4">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between pr-8">
                         <CardTitle className="text-xl font-bold text-slate-800">
                           {record.firstName} {record.lastName}
                         </CardTitle>
@@ -723,6 +823,20 @@ const filteredPatientRecords = records.filter((record) => {
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="space-y-3">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-indigo-600 rounded-lg flex items-center justify-center">
+                            <Calendar className="h-4 w-4 text-white" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                              Visit Date
+                            </div>
+                            <div className="font-bold text-slate-800">
+                              {record.date || "—"}
+                            </div>
+                          </div>
+                        </div>
+
                         <div className="flex items-center space-x-3">
                           <div className="w-8 h-8 bg-gradient-to-br from-orange-400 to-red-600 rounded-lg flex items-center justify-center">
                             <Calendar className="h-4 w-4 text-white" />
