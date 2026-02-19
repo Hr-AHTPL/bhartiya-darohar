@@ -180,7 +180,7 @@ const generateExcelBill = async (saleId) => {
       addTotalRow("SGST 2.5%:", `₹${sgst.toFixed(2)}`);
       addTotalRow("CGST 2.5%:", `₹${cgst.toFixed(2)}`);
 
-      const roundoff = sale.totalAmount - (afterDiscount + sgst + cgst);
+      const roundoff = sale.totalAmount - afterDiscount;
       addTotalRow("Roundoff:", `₹${roundoff.toFixed(2)}`);
 
       addTotalRow("GRAND TOTAL:", `₹${sale.totalAmount.toFixed(2)}`);
@@ -291,7 +291,7 @@ const recordSale = async (req, res) => {
     const cgst = subtotal * 0.025;
     const discountAmount = (subtotal * discount) / 100;
     const subtotalAfterDiscount = subtotal - discountAmount;
-    const totalAmount = Math.round(subtotalAfterDiscount + sgst + cgst);
+    const totalAmount = Math.round(subtotalAfterDiscount);
 
     const sale = new saleModel({
       billNumber,
@@ -417,7 +417,7 @@ const updateSale = async (req, res) => {
     const cgst = subtotal * 0.025;
     const discountAmount = (subtotal * discount) / 100;
     const subtotalAfterDiscount = subtotal - discountAmount;
-    const totalAmount = Math.round(subtotalAfterDiscount + sgst + cgst);
+    const totalAmount = Math.round(subtotalAfterDiscount);
 
     // Update sale
     existingSale.patientId = patientId;
@@ -453,14 +453,12 @@ const downloadUpdatedBill = async (req, res) => {
     const excelBuffer = await generateExcelBill(id);
 
     // Fetch sale for filename
-    // Fetch sale for filename
     const sale = await saleModel.findById(id);
-    const billNumber = (sale.billNumber || sale.patientId).replace(/[^a-zA-Z0-9_-]/g, '_');
-    const fileName = `Updated_Invoice_${billNumber}_${new Date().getTime()}.xlsx`;
+    const fileName = `Updated_Invoice_${sale.billNumber || sale.patientId}_${new Date().getTime()}.xlsx`;
 
-// Set response headers
+    // Set response headers
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=${fileName}`); // ✅ No quotes
+    res.setHeader('Content-Disposition', `attachment; filename=${fileName}`);
     res.setHeader('Content-Length', excelBuffer.length);
 
     // Send the Excel file
