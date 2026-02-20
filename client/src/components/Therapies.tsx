@@ -34,7 +34,9 @@ export interface PatientRecord {
   prakritiparikshanamount?: number;
   therapyamount?: number;
   therapyname?: string;
+  therapynames?: string[];
   visitId?: string;
+  billNumber?: string;
 }
 
 interface BasicPatient {
@@ -120,7 +122,7 @@ const Therapies = () => {
   const [currentView, setCurrentView] = useState("therapies");
   const [patientSearchTerm, setPatientSearchTerm] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<{ visitId: string; therapyname: string; patientName: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ visitId: string; therapyname: string; patientName: string; billNumber: string } | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -163,7 +165,7 @@ const Therapies = () => {
       }
       // Remove card instantly from cache without full refetch
       queryClient.setQueryData(["patientRecords"], (old: PatientRecord[] = []) =>
-        old.filter((r) => !(r.visitId === visitId && r.therapyname === therapyname))
+        old.filter((r) => !(r.visitId === visitId && r.billNumber === (confirmDelete?.billNumber || '')))
       );
     } catch {
       alert("Network error while deleting. Please try again.");
@@ -791,7 +793,7 @@ const filteredPatientRecords = records.filter((record) => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredPatientRecords.map((record, index) => (
                   <Card
-                    key={`${record.visitId}-${record.therapyname}-${index}`}
+                    key={record.billNumber || `${record.visitId}-${index}`}
                     className="bg-white/70 backdrop-blur-md border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 rounded-3xl relative"
                   >
                     {/* Admin-only delete button */}
@@ -800,7 +802,7 @@ const filteredPatientRecords = records.filter((record) => {
                         onClick={() =>
                           setConfirmDelete({
                             visitId: record.visitId || "",
-                            therapyname: record.therapyname || "",
+                            therapyname: record.therapyname || "",  // joined string of all therapies on this bill
                             patientName: `${record.firstName ?? ""} ${record.lastName ?? ""}`.trim(),
                           })
                         }
@@ -817,7 +819,7 @@ const filteredPatientRecords = records.filter((record) => {
                           {record.firstName} {record.lastName}
                         </CardTitle>
                         <div className="text-xs font-bold bg-gradient-to-r from-orange-400 to-red-600 text-white px-2 py-1 rounded-full">
-                          {record.idno}
+                          {record.billNumber || record.idno}
                         </div>
                       </div>
                     </CardHeader>
