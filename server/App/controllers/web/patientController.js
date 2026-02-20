@@ -1742,12 +1742,41 @@ const exportRevenueReport = async (req, res) => {
             prakritiCount++;
           }
 
-          // Therapy - count each therapy separately - Store raw amounts
-          if (Array.isArray(visit.therapyWithAmount)) {
-            visit.therapyWithAmount.forEach((therapy) => {
-              const amount = Number(therapy.receivedAmount || 0);
-              if (amount > 0) {
-                therapySum += amount;
+          // Therapy — same resolveAmount logic as the therapy report
+          // therapyWithAmount[].receivedAmount is always 0; real fee is in therapies[].amount
+          // Count each bill (not each therapy) to match therapy report row count
+          if (Array.isArray(visit.therapyBills) && visit.therapyBills.length > 0) {
+            const discountList = visit.discounts?.therapies || [];
+            const therapiesList = visit.therapies || [];
+            const twaList = visit.therapyWithAmount || [];
+
+            const resolveTherapyAmount = (tName) => {
+              const cleanName = tName.trim().toLowerCase();
+              const discountEntry = discountList.find(d => d.name?.trim().toLowerCase() === cleanName);
+              const discountPct = discountEntry ? Number(discountEntry.percentage) || 0 : 0;
+              const applyDiscount = (base) => discountPct > 0 ? Math.round(base * (1 - discountPct / 100)) : base;
+
+              const exact = twaList.find(t => t.name?.trim().toLowerCase() === cleanName && Number(t.receivedAmount) > 0);
+              if (exact) return applyDiscount(Number(exact.receivedAmount));
+
+              const startsWith = twaList.find(t => t.name?.trim().toLowerCase().startsWith(cleanName) && Number(t.receivedAmount) > 0);
+              if (startsWith) return applyDiscount(Number(startsWith.receivedAmount));
+
+              const contains = twaList.find(t => t.name?.trim().toLowerCase().includes(cleanName) && Number(t.receivedAmount) > 0);
+              if (contains) return applyDiscount(Number(contains.receivedAmount));
+
+              const fromTherapies = therapiesList.find(t => t.name?.trim().toLowerCase() === cleanName);
+              if (fromTherapies && Number(fromTherapies.amount) > 0) return applyDiscount(Number(fromTherapies.amount));
+
+              return 0;
+            };
+
+            visit.therapyBills.forEach((bill) => {
+              const billTherapies = (bill.therapies || []).filter(t => t && t.trim() !== "");
+              if (billTherapies.length === 0) return;
+              const billTotal = billTherapies.reduce((sum, tName) => sum + resolveTherapyAmount(tName), 0);
+              if (billTotal > 0) {
+                therapySum += billTotal;
                 therapyCount++;
               }
             });
