@@ -236,6 +236,8 @@ const canEdit = () => ['admin', 'receptionist', 'doctor'].includes(userRole);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const wrapperRef = useRef(null);
+  // ✅ FIX: Track available stock of the medicine selected from suggestions
+  const [selectedMedicineStock, setSelectedMedicineStock] = useState<number | null>(null);
 
   const [closingStock, setClosingStock] = useState(935);
 const [isEditingClosingStock, setIsEditingClosingStock] = useState(false);
@@ -998,6 +1000,19 @@ const addMedicineToSale = () => {
     return;
   }
 
+  // ✅ FIX: Check stock before adding medicine to bill
+  const requestedQty = parseFloat(currentMedicine.quantity);
+  if (selectedMedicineStock !== null) {
+    if (selectedMedicineStock === 0) {
+      alert(`⚠️ Out of Stock!\n"${currentMedicine.medicineName}" is currently out of stock (0 units available). Cannot add to bill.`);
+      return;
+    }
+    if (requestedQty > selectedMedicineStock) {
+      alert(`⚠️ Insufficient Stock!\nOnly ${selectedMedicineStock} unit(s) of "${currentMedicine.medicineName}" available in inventory.\nYou requested ${requestedQty} unit(s).`);
+      return;
+    }
+  }
+
   const newMed = {
     id: `sale-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ UNIQUE ID
     medicineName: currentMedicine.medicineName,
@@ -1025,6 +1040,8 @@ const addMedicineToSale = () => {
     quantity: "",
   });
   
+  // ✅ FIX: Reset stock tracker after medicine is added
+  setSelectedMedicineStock(null);
   setShowSuggestions(false);
 };
 
@@ -2385,6 +2402,8 @@ const handleRecordSale = async () => {
                           ...currentMedicine,
                           medicineName: val,
                         });
+                        // ✅ FIX: Reset stock tracker when user types manually (no suggestion selected)
+                        setSelectedMedicineStock(null);
                         fetchSuggestions(val);
                       }}
                       placeholder="Enter medicine name"
@@ -2404,6 +2423,8 @@ const handleRecordSale = async () => {
                                 pricePerUnit: med.Price?.toString() || "",
                                 hsn: med.HSN || currentMedicine.hsn,
                               });
+                              // ✅ FIX: Save the available stock so we can validate before adding to bill
+                              setSelectedMedicineStock(med.Quantity ?? null);
                               setShowSuggestions(false);
                             }}
                             className="px-4 py-2 hover:bg-orange-100 cursor-pointer"
