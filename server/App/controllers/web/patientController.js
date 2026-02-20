@@ -1698,14 +1698,29 @@ const exportRevenueReport = async (req, res) => {
         .json({ message: "Missing dateFrom or dateTo in query params" });
     }
 
-    const fromDate = new Date(dateFrom);
-    const toDate = new Date(dateTo);
-    toDate.setHours(23, 59, 59, 999);
-
+    // Parse any date in LOCAL time. new Date("YYYY-MM-DD") = UTC = wrong in IST.
     const parseDDMMYYYY = (str) => {
-      const [day, month, year] = str.split("/").map(Number);
-      return new Date(year, month - 1, day);
+      if (!str) return null;
+      if (str.includes("/")) {
+        const [day, month, year] = str.split("/").map(Number);
+        if (!day || !month || !year) return null;
+        return new Date(year, month - 1, day);
+      }
+      if (str.includes("-")) {
+        const [year, month, day] = str.split("-").map(Number);
+        if (!day || !month || !year) return null;
+        return new Date(year, month - 1, day);
+      }
+      return null;
     };
+
+    const fromDate = parseDDMMYYYY(dateFrom);
+    const toDate = parseDDMMYYYY(dateTo);
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+    fromDate.setHours(0, 0, 0, 0);
+    toDate.setHours(23, 59, 59, 999);
 
     // ----------------- 1. Fetch ALL visits at once (OPTIMIZED) -----------------
     const allVisits = await visitModel.find().lean(); // ✅ Single query with lean()
@@ -1719,71 +1734,68 @@ const exportRevenueReport = async (req, res) => {
 
     // ✅ Process all visits in a single loop
     allVisits.forEach((visit) => {
-      if (!visit.date) return;
-
       try {
+        const discountList = visit.discounts?.therapies || [];
+        const therapiesList = visit.therapies || [];
+        const twaList = visit.therapyWithAmount || [];
+
+        const resolveTherapyAmount = (tName) => {
+          const cleanName = tName.trim().toLowerCase();
+          const discountEntry = discountList.find(d => d.name?.trim().toLowerCase() === cleanName);
+          const discountPct = discountEntry ? Number(discountEntry.percentage) || 0 : 0;
+          const applyDiscount = (base) => discountPct > 0 ? Math.round(base * (1 - discountPct / 100)) : base;
+          const exact = twaList.find(t => t.name?.trim().toLowerCase() === cleanName && Number(t.receivedAmount) > 0);
+          if (exact) return applyDiscount(Number(exact.receivedAmount));
+          const sw = twaList.find(t => t.name?.trim().toLowerCase().startsWith(cleanName) && Number(t.receivedAmount) > 0);
+          if (sw) return applyDiscount(Number(sw.receivedAmount));
+          const ct = twaList.find(t => t.name?.trim().toLowerCase().includes(cleanName) && Number(t.receivedAmount) > 0);
+          if (ct) return applyDiscount(Number(ct.receivedAmount));
+          const ft = therapiesList.find(t => t.name?.trim().toLowerCase() === cleanName);
+          if (ft && Number(ft.amount) > 0) return applyDiscount(Number(ft.amount));
+          return 0;
+        };
+
+        // PATH A — Modern visits: filter each bill by its OWN billDate.
+        // Runs OUTSIDE the visitDate gate — bill date and visit date can differ.
+        if (Array.isArray(visit.therapyBills) && visit.therapyBills.length > 0) {
+          visit.therapyBills.forEach((bill) => {
+            const billTherapies = (bill.therapies || []).filter(t => t && t.trim() !== "");
+            if (billTherapies.length === 0) return;
+            const billDateStr = bill.billDate || visit.date;
+            if (!billDateStr) return;
+            const billDate = parseDDMMYYYY(billDateStr);
+            if (!billDate || isNaN(billDate.getTime())) return;
+            billDate.setHours(0, 0, 0, 0);
+            if (billDate < fromDate || billDate > toDate) return;
+            therapySum += billTherapies.reduce((sum, tName) => sum + resolveTherapyAmount(tName), 0);
+            therapyCount++; // count ALL bills including ₹0 — matches therapy report
+          });
+        }
+
+        // Consultation, Prakriti, PATH B all use visit.date
+        if (!visit.date) return;
         const visitDate = parseDDMMYYYY(visit.date);
-        
-        // ✅ Check if date is valid
-        if (isNaN(visitDate.getTime())) return;
-        
-        if (visitDate >= fromDate && visitDate <= toDate) {
-          // Consultation - Store raw amounts first, round only for display
-          const consultationAmount = Number(visit.consultationamount || 0);
-          if (consultationAmount > 0) {
-            consultationSum += consultationAmount;
-            consultationCount++;
-          }
+        if (!visitDate || isNaN(visitDate.getTime())) return;
+        visitDate.setHours(0, 0, 0, 0);
+        if (visitDate < fromDate || visitDate > toDate) return;
 
-          // Prakriti Parikshan - Store raw amounts first
-          const prakritiAmount = Number(visit.prakritiparikshanamount || 0);
-          if (prakritiAmount > 0) {
-            otherServicesSum += prakritiAmount;
-            prakritiCount++;
-          }
+        const consultationAmount = Number(visit.consultationamount || 0);
+        if (consultationAmount > 0) { consultationSum += consultationAmount; consultationCount++; }
 
-          // Therapy — same resolveAmount logic as the therapy report
-          // therapyWithAmount[].receivedAmount is always 0; real fee is in therapies[].amount
-          // Count each bill (not each therapy) to match therapy report row count
-          if (Array.isArray(visit.therapyBills) && visit.therapyBills.length > 0) {
-            const discountList = visit.discounts?.therapies || [];
-            const therapiesList = visit.therapies || [];
-            const twaList = visit.therapyWithAmount || [];
+        const prakritiAmount = Number(visit.prakritiparikshanamount || 0);
+        if (prakritiAmount > 0) { otherServicesSum += prakritiAmount; prakritiCount++; }
 
-            const resolveTherapyAmount = (tName) => {
-              const cleanName = tName.trim().toLowerCase();
-              const discountEntry = discountList.find(d => d.name?.trim().toLowerCase() === cleanName);
-              const discountPct = discountEntry ? Number(discountEntry.percentage) || 0 : 0;
-              const applyDiscount = (base) => discountPct > 0 ? Math.round(base * (1 - discountPct / 100)) : base;
-
-              const exact = twaList.find(t => t.name?.trim().toLowerCase() === cleanName && Number(t.receivedAmount) > 0);
-              if (exact) return applyDiscount(Number(exact.receivedAmount));
-
-              const startsWith = twaList.find(t => t.name?.trim().toLowerCase().startsWith(cleanName) && Number(t.receivedAmount) > 0);
-              if (startsWith) return applyDiscount(Number(startsWith.receivedAmount));
-
-              const contains = twaList.find(t => t.name?.trim().toLowerCase().includes(cleanName) && Number(t.receivedAmount) > 0);
-              if (contains) return applyDiscount(Number(contains.receivedAmount));
-
-              const fromTherapies = therapiesList.find(t => t.name?.trim().toLowerCase() === cleanName);
-              if (fromTherapies && Number(fromTherapies.amount) > 0) return applyDiscount(Number(fromTherapies.amount));
-
-              return 0;
-            };
-
-            visit.therapyBills.forEach((bill) => {
-              const billTherapies = (bill.therapies || []).filter(t => t && t.trim() !== "");
-              if (billTherapies.length === 0) return;
-              const billTotal = billTherapies.reduce((sum, tName) => sum + resolveTherapyAmount(tName), 0);
-              if (billTotal > 0) {
-                therapySum += billTotal;
-                therapyCount++;
-              }
-            });
-          }
+        // PATH B — Old visits (no therapyBills[]): amounts in therapyWithAmount[].receivedAmount
+        if (!Array.isArray(visit.therapyBills) || visit.therapyBills.length === 0) {
+          twaList.forEach((t) => {
+            if (t.name && t.name.trim() !== "") {
+              therapySum += Number(t.receivedAmount || 0);
+              therapyCount++;
+            }
+          });
         }
       } catch (err) {
-        console.error(`Error parsing date for visit ${visit._id}:`, visit.date, err.message);
+        console.error(`Error processing visit ${visit._id}:`, err.message);
       }
     });
 
@@ -2851,20 +2863,21 @@ const exportTherapyReport = async (req, res) => {
 
     console.log("💆 Therapy Report Request:", { dateFrom, dateTo, selectedTherapy });
 
-    if (!dateFrom || !dateTo || !selectedTherapy) {
+    if (!dateFrom || !dateTo) {
       return res.status(400).json({
-        message: "Missing dateFrom, dateTo, or selectedTherapy in query params",
+        message: "Missing dateFrom or dateTo in query params",
       });
     }
 
-    const selectedTherapies = selectedTherapy
+    // Empty / missing selectedTherapy = match ALL bills (no name filter).
+    // This makes totals align with the revenue report exactly — including bills
+    // whose therapy names aren't in the frontend dropdown list.
+    const selectedTherapies = (selectedTherapy || "")
       .split(",")
       .map((t) => t.trim().toLowerCase())
       .filter((t) => t.length > 0);
 
-    if (selectedTherapies.length === 0) {
-      return res.status(400).json({ message: "No valid therapies provided" });
-    }
+    const matchAllTherapies = selectedTherapies.length === 0;
 
     // Universal date parser: handles DD/MM/YYYY and YYYY-MM-DD
     const parseDate = (str) => {
@@ -3004,11 +3017,13 @@ const exportTherapyReport = async (req, res) => {
       const billTherapies = record.billTherapies || [];
       if (billTherapies.length === 0) return false;
 
-      // At least one therapy on this bill must match selected
-      const hasMatch = billTherapies.some((tName) =>
-        tName && selectedTherapies.includes(tName.trim().toLowerCase())
-      );
-      if (!hasMatch) return false;
+      // Skip name filter when no therapies selected (include all bills)
+      if (!matchAllTherapies) {
+        const hasMatch = billTherapies.some((tName) =>
+          tName && selectedTherapies.includes(tName.trim().toLowerCase())
+        );
+        if (!hasMatch) return false;
+      }
 
       // Must fall within date range
       const dateStr = record.billDate || record.visitDate;
@@ -3031,10 +3046,12 @@ const exportTherapyReport = async (req, res) => {
 
     // ── Build Excel rows ──────────────────────────────────────
     const rows = filteredRows.map((record) => {
-      // Only include therapies from this bill that match the selection
-      const matchingTherapies = (record.billTherapies || []).filter(
-        (tName) => tName && selectedTherapies.includes(tName.trim().toLowerCase())
-      );
+      // Include all therapy names when no filter, else only matching ones
+      const matchingTherapies = matchAllTherapies
+        ? (record.billTherapies || []).filter((tName) => tName && tName.trim() !== "")
+        : (record.billTherapies || []).filter(
+            (tName) => tName && selectedTherapies.includes(tName.trim().toLowerCase())
+          );
 
       // Sum up amounts for all matching therapies on this bill
       const totalAmount = matchingTherapies.reduce((sum, tName) => {
@@ -3993,7 +4010,7 @@ const getTherapyPatients = async (req, res) => {
         email:         record.email,
         city:          record.city,
         state:         record.state,
-        date:          record.date,
+        date:          record.billDate || record.date,
         appointment:   record.appointment,
         department:    record.department,
         sponsor:       record.sponsor,
@@ -4038,12 +4055,12 @@ const getTherapyPatients = async (req, res) => {
 const deleteTherapyFromVisit = async (req, res) => {
   try {
     const { visitId } = req.params;
-    const { therapyname } = req.body;
+    const { billNumber } = req.body;
 
-    if (!visitId || !therapyname) {
+    if (!visitId || !billNumber) {
       return res.status(400).json({
         status: 0,
-        message: "visitId and therapyname are required",
+        message: "visitId and billNumber are required",
       });
     }
 
@@ -4052,107 +4069,76 @@ const deleteTherapyFromVisit = async (req, res) => {
       return res.status(404).json({ status: 0, message: "Visit not found" });
     }
 
-    const normalizedTarget = therapyname.trim().toLowerCase();
-
-    // ── Check existence across ALL places the therapy could live ─
-    // Old visits: therapies[] is empty, data is in therapyBills[] + therapyWithAmount[]
-    // New visits: data is in therapies[] + therapyBills[] + therapyWithAmount[]
-    const inTherapies = (visit.therapies || []).some(
-      (t) => t.name?.trim().toLowerCase() === normalizedTarget
+    // Find the bill entry to delete
+    const billEntry = (visit.therapyBills || []).find(
+      (b) => b.billNumber === billNumber
     );
 
-    const inTherapyBills = (visit.therapyBills || []).some((bill) =>
-      (bill.therapies || []).some(
-        (tName) => tName?.trim().toLowerCase() === normalizedTarget
-      )
-    );
-
-    const inTherapyWithAmount = (visit.therapyWithAmount || []).some((t) => {
-      const tLower = t.name?.trim().toLowerCase() || "";
-      return (
-        tLower === normalizedTarget ||
-        tLower.startsWith(normalizedTarget) ||
-        tLower.includes(normalizedTarget)
-      );
-    });
-
-    if (!inTherapies && !inTherapyBills && !inTherapyWithAmount) {
+    if (!billEntry) {
       return res.status(404).json({
         status: 0,
-        message: `Therapy "${therapyname}" not found in this visit`,
+        message: `Bill "${billNumber}" not found in this visit`,
       });
     }
 
-    // ── 1. Remove from visit.therapies[] ─────────────────────
-    if (visit.therapies && visit.therapies.length > 0) {
-      visit.therapies = visit.therapies.filter(
-        (t) => t.name?.trim().toLowerCase() !== normalizedTarget
-      );
-    }
+    // Get the therapy names from this bill so we can clean up related arrays
+    const billTherapyNames = (billEntry.therapies || []).map((t) =>
+      t?.trim().toLowerCase()
+    );
 
-    // ── 2. Remove from visit.therapyWithAmount[] ─────────────
-    // Use startsWith + contains to handle "(1 session)" suffix and
-    // combined strings like "Sarvanga Abhyangam (1 session), ..."
+    // ── 1. Remove this bill from therapyBills[] ───────────────
+    visit.therapyBills = visit.therapyBills.filter(
+      (b) => b.billNumber !== billNumber
+    );
+    visit.markModified("therapyBills");
+
+    // ── 2. Remove matching entries from therapyWithAmount[] ───
+    // Only remove entries whose names match therapies on this specific bill
     if (visit.therapyWithAmount && visit.therapyWithAmount.length > 0) {
       visit.therapyWithAmount = visit.therapyWithAmount.filter((t) => {
         const tLower = t.name?.trim().toLowerCase() || "";
-        // Keep this entry if it does NOT match the target therapy
-        const isExact      = tLower === normalizedTarget;
-        const isStartsWith = tLower.startsWith(normalizedTarget);
-        const isContains   = tLower.includes(normalizedTarget);
-        return !isExact && !isStartsWith && !isContains;
+        return !billTherapyNames.some(
+          (bName) =>
+            tLower === bName ||
+            tLower.startsWith(bName) ||
+            tLower.includes(bName)
+        );
       });
     }
 
-    // ── 3. Remove from visit.discounts.therapies[] ───────────
-    if (visit.discounts?.therapies && visit.discounts.therapies.length > 0) {
-      visit.discounts.therapies = visit.discounts.therapies.filter(
-        (t) => t.name?.trim().toLowerCase() !== normalizedTarget
+    // ── 3. Remove matching entries from therapies[] ───────────
+    if (visit.therapies && visit.therapies.length > 0) {
+      visit.therapies = visit.therapies.filter(
+        (t) => !billTherapyNames.includes(t.name?.trim().toLowerCase())
       );
-      visit.markModified("discounts");
     }
 
-    // ── 4. Remove from visit.therapyBills[].therapies[] ──────
-    // Remove the therapy name from every bill entry,
-    // then drop any bill entry that becomes completely empty.
-    if (visit.therapyBills && visit.therapyBills.length > 0) {
-      visit.therapyBills = visit.therapyBills
-        .map((bill) => {
-          const updatedTherapies = (bill.therapies || []).filter(
-            (tName) => tName?.trim().toLowerCase() !== normalizedTarget
-          );
-          return {
-            _id:       bill._id,
-            billNumber: bill.billNumber,
-            billDate:  bill.billDate,
-            therapies: updatedTherapies,
-            createdAt: bill.createdAt,
-          };
-        })
-        .filter((bill) => bill.therapies.length > 0);
-
-      visit.markModified("therapyBills");
+    // ── 4. Remove matching entries from discounts.therapies[] ─
+    if (visit.discounts?.therapies && visit.discounts.therapies.length > 0) {
+      visit.discounts.therapies = visit.discounts.therapies.filter(
+        (t) => !billTherapyNames.includes(t.name?.trim().toLowerCase())
+      );
+      visit.markModified("discounts");
     }
 
     await visit.save();
 
     console.log(
-      `✅ Therapy "${therapyname}" deleted from visit ${visitId}.` +
-      ` therapies[]: ${visit.therapies?.length ?? 0},` +
+      `✅ Bill "${billNumber}" deleted from visit ${visitId}.` +
       ` therapyBills[]: ${visit.therapyBills?.length ?? 0},` +
       ` therapyWithAmount[]: ${visit.therapyWithAmount?.length ?? 0}`
     );
 
     res.status(200).json({
       status: 1,
-      message: `Therapy "${therapyname}" deleted successfully`,
+      message: `Bill "${billNumber}" deleted successfully`,
     });
-  } catch (err) {
-    console.error("Error deleting therapy from visit:", err);
+  } catch (error) {
+    console.error("❌ Error deleting bill:", error);
     res.status(500).json({
       status: 0,
-      message: "Error deleting therapy",
-      error: err.message,
+      message: "Internal Server Error",
+      error: error.message,
     });
   }
 };
