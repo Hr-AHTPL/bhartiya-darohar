@@ -1,1208 +1,1342 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useEffect, useRef } from "react";
-import axios from "axios";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import ExcelJS from "exceljs";
-import { saveAs } from "file-saver";
-import { Textarea } from "@/components/ui/textarea";
-import debounce from "lodash.debounce";
-import API_BASE_URL from "@/config/api.config";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Plus,
-  Edit,
-  Trash2,
-  Pill,
-  Package,
-  AlertTriangle,
-  DollarSign,
-  ShoppingCart,
-  IndianRupee,
-  Code,
-  Search,
-  X,
-} from "lucide-react";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationEllipsis,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination";
-import PurchaseForm from "./PurchaseForm";
+const patientModel = require("../../models/patientDetails.model");
+const counterModel = require("../../models/counterDetails");
+const PurchaseModel = require("../../models/purchase.model"); // Add this line
+const ExcelJS = require("exceljs");
+const path = require("path");
+const fs = require("fs");
+const axios = require("axios");
 
-interface Medicine {
-  id: string;
-  Code: string;
-  "Product Name": string;
-  Unit: string;
-  Company: string;
-  Quantity: number;
-  Price: number;
-}
+const visitModel = require("../../models/visitDetails.model");
+const saleModel = require("../../models/sale.model");
+const medicineModel = require("../../models/medicineDetails.model");
 
-interface SaleMedicine {
-  id: string;
-  medicineName: string;
-  batch: string;
-  hsn: string;
-  expiry: string;
-  pricePerUnit: number;
-  quantity: number;
-  totalPrice: number;
-}
+const { generateBillNumber } = require('../../utils/billNumberGenerator');
 
-interface Sale {
-  id: number;
-  patientId: string;
-  patientName: string;
-  medicines: SaleMedicine[];
-  subtotal: number;
-  sgst: number;
-  cgst: number;
-  totalAmount: number;
-  saleDate: string;
-}
+const exportPrescriptionFormToExcel = async (req, res) => {
+  try {
+    const patientId = req.params.id;
 
-//import { Edit, Trash2 } from "lucide-react";
-
-
-
-const MedicineInventory = () => {
-  const [medicines, setMedicines] = useState<Medicine[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [sales, setSales] = useState<Sale[]>([]);
-
-  const [userRole, setUserRole] = useState<string>('');
-  // ✅ ADD THIS STATE
-  const [purchases, setPurchases] = useState<any[]>([]);
-  useEffect(() => {
-    const fetchSales = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/sale/view`);
-        const data = await response.json();
-        if (data.success) {
-          setSales(data.sales);
-        }
-      } catch (error) {
-        console.error("Failed to fetch sales:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchSales();
-  }, []);
-
-  // ✅ ADD THIS useEffect TO FETCH PURCHASES
-useEffect(() => {
-  const fetchPurchases = async () => {
-    try {
-      console.log("📄 Fetching purchases from API...");
-      const response = await fetch(`${API_BASE_URL}/api/purchase/view`);
-      
-      console.log("📡 Response status:", response.status);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log("📦 Received purchases data:", data);
-      
-      if (data.success && Array.isArray(data.purchases)) {
-        setPurchases(data.purchases);
-        console.log(`✅ Loaded ${data.purchases.length} purchases`);
-      } else {
-        console.error("❌ API returned unexpected format:", data);
-        setPurchases([]);
-      }
-    } catch (error) {
-      console.error("❌ Failed to fetch purchases:", error);
-      setPurchases([]);
+    // Fetch patient details
+    const patient = await patientModel.findById(patientId);
+    if (!patient) {
+      return res
+        .status(404)
+        .json({ message: `No patient found with ID: ${patientId}` });
     }
-  };
 
-  fetchPurchases();
-}, []);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(20);
-  const [salesCurrentPage, setSalesCurrentPage] = useState(1);
-  const [salesItemsPerPage] = useState(10);
+    // Fetch the last visit with all details
+    const lastVisit = await visitModel
+      .findOne({ patientId: patient._id })
+      .sort({ createdAt: -1 });
 
-  const [isAddingMedicine, setIsAddingMedicine] = useState(false);
-  const [isEditingMedicine, setIsEditingMedicine] = useState(false);
-  const [editingMedicineId, setEditingMedicineId] = useState<string | null>(
-    null
-  );
-  const [isRecordingSale, setIsRecordingSale] = useState(false);
-  const [activeTab, setActiveTab] = useState("inventory");
+    if (!lastVisit) {
+      return res
+        .status(404)
+        .json({ message: "No last visit data found for patient" });
+    }
 
-  const [newMedicine, setNewMedicine] = useState({
-    code: "",
-    productName: "",
-    unit: "",
-    company: "",
-    quantity: "",
-    price: "",
-  });
-
-  const [newSale, setNewSale] = useState({
-    patientId: "",
-    patientName: "",
-    medicines: [],
-    saleDate: new Date().toISOString().split("T")[0],
-    discount: "", // ⬅ new
-    discountApprovedBy: "", // ⬅ new
-  });
-
-  const [currentMedicine, setCurrentMedicine] = useState({
-    medicineName: "",
-    batch: "",
-    hsn: "",
-    expiry: "",
-    pricePerUnit: "",
-    quantity: "",
-  });
-
-
-  const [editSuggestions, setEditSuggestions] = useState([]);
-const [showEditSuggestions, setShowEditSuggestions] = useState(false);
-const editWrapperRef = useRef(null);
-  
-const [isEditingSale, setIsEditingSale] = useState(false);
-const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
-const [editSale, setEditSale] = useState({
-  patientId: "",
-  patientName: "",
-  medicines: [],
-  saleDate: "",
-  discount: "",
-  discountApprovedBy: "",
-});
-const [editCurrentMedicine, setEditCurrentMedicine] = useState({
-  medicineName: "",
-  batch: "",
-  hsn: "",
-  expiry: "",
-  pricePerUnit: "",
-  quantity: "",
-});
-
-  // Static min stock value as requested
-  const MIN_STOCK = 10;
-
-  const filteredMedicines = medicines.filter((medicine) => {
-    if (!searchTerm) return true;
-
-    const searchLower = searchTerm.toLowerCase();
-    return (
-      medicine["Product Name"]?.toLowerCase().includes(searchLower) ||
-      medicine.Code?.toString().toLowerCase().includes(searchLower) ||
-      medicine.Company?.toLowerCase().includes(searchLower) ||
-      medicine.Unit?.toLowerCase().includes(searchLower)
+    // Load the Excel template
+    const templatePath = path.join(
+      __dirname,
+      "../../assets/patientPrescription.xlsx"
     );
-  });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(templatePath);
 
-  
-// 4. ADD THESE HELPER FUNCTIONS (after your state declarations, before other functions)
-const isAdmin = () => userRole === 'admin';
-const canDelete = () => isAdmin();
-const canEdit = () => ['admin', 'receptionist', 'doctor'].includes(userRole);
-
-  const totalPages = Math.ceil(filteredMedicines.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentMedicines = filteredMedicines.slice(startIndex, endIndex);
-
-  const salesTotalPages = Math.ceil(sales.length / salesItemsPerPage);
-  const salesStartIndex = (salesCurrentPage - 1) * salesItemsPerPage;
-  const salesEndIndex = salesStartIndex + salesItemsPerPage;
-  const currentSales = sales.slice(salesStartIndex, salesEndIndex);
-  const [suggestions, setSuggestions] = useState([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const wrapperRef = useRef(null);
-  // ✅ FIX: Track available stock of the medicine selected from suggestions
-  const [selectedMedicineStock, setSelectedMedicineStock] = useState<number | null>(null);
-
-  const [closingStock, setClosingStock] = useState(935);
-const [isEditingClosingStock, setIsEditingClosingStock] = useState(false);
-const [editClosingStockValue, setEditClosingStockValue] = useState("");
-const [closingStockYear, setClosingStockYear] = useState(new Date().getFullYear());
-const [closingStockNotes, setClosingStockNotes] = useState("");
-const [closingStockUpdatedBy, setClosingStockUpdatedBy] = useState("");
-
-  const fetchSuggestions = debounce(async (query) => {
-    try {
-      if (!query.trim()) return setSuggestions([]);
-
-      const res = await axios.get(`${API_BASE_URL}/medicine/view`);
-      if (res.data.status === 1) {
-        const filtered = res.data.medicineList.filter((med) =>
-          med["Product Name"].toLowerCase().includes(query.toLowerCase())
-        );
-        setSuggestions(filtered);
-        setShowSuggestions(true);
-      }
-    } catch (err) {
-      console.error("Error fetching medicine list:", err);
-    }
-  }, 300);
-
-  // Fetch suggestions for edit modal
-const fetchEditSuggestions = debounce(async (query) => {
-  try {
-    if (!query.trim()) return setEditSuggestions([]);
-
-    const res = await axios.get(`${API_BASE_URL}/medicine/view`);
-    if (res.data.status === 1) {
-      const filtered = res.data.medicineList.filter((med: any) =>
-        med["Product Name"].toLowerCase().includes(query.toLowerCase())
-      );
-      setEditSuggestions(filtered);
-      setShowEditSuggestions(true);
-    }
-  } catch (err) {
-    console.error("Error fetching medicine list:", err);
-  }
-}, 300);
-
-// Handle click outside for edit suggestions
-useEffect(() => {
-  function handleClickOutside(event: any) {
-    if (editWrapperRef.current && !editWrapperRef.current.contains(event.target)) {
-      setShowEditSuggestions(false);
-    }
-  }
-  document.addEventListener("mousedown", handleClickOutside);
-  return () => document.removeEventListener("mousedown", handleClickOutside);
-}, []);
-
-// Handle edit suggestion click
-const handleEditSuggestionClick = (med: any) => {
-  setEditCurrentMedicine({
-    ...editCurrentMedicine,
-    medicineName: med["Product Name"],
-    pricePerUnit: med.Price?.toString() || "",
-  });
-  setShowEditSuggestions(false);
-};
-
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
-        setShowSuggestions(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm]);
-
-  useEffect(() => {
-  const role = localStorage.getItem('userRole');
-  setUserRole(role || '');
-  console.log('User role loaded:', role);
-}, []);
-
-  const getPageNumbers = () => {
-    const pages = [];
-    const maxVisiblePages = 5;
-
-    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-    const endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-
-    if (endPage - startPage + 1 < maxVisiblePages) {
-      startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    const worksheet = workbook.getWorksheet("Sheet1");
+    if (!worksheet) {
+      return res.status(400).json({ message: "Sheet 'Sheet1' not found" });
     }
 
-    for (let i = startPage; i <= endPage; i++) {
-      pages.push(i);
-    }
-
-    return pages;
-  };
-
-  // Update quantity of medicine in edit sale
-const updateMedicineQuantityInEdit = (medicineId: string, newQuantity: number) => {
-  setEditSale({
-    ...editSale,
-    medicines: editSale.medicines.map((med) =>
-      med.id === medicineId
-        ? {
-            ...med,
-            quantity: newQuantity,
-            totalPrice: newQuantity * med.pricePerUnit,
-          }
-        : med
-    ),
-  });
-};
-
-// Update price of medicine in edit sale
-const updateMedicinePriceInEdit = (medicineId: string, newPrice: number) => {
-  setEditSale({
-    ...editSale,
-    medicines: editSale.medicines.map((med) =>
-      med.id === medicineId
-        ? {
-            ...med,
-            pricePerUnit: newPrice,
-            totalPrice: med.quantity * newPrice,
-          }
-        : med
-    ),
-  });
-};
-
-  // Generate page numbers for sales pagination
-  const getSalesPageNumbers = () => {
-    const pages = [];
-    const maxVisiblePages = 5;
-
-    let startPage = Math.max(
-      1,
-      salesCurrentPage - Math.floor(maxVisiblePages / 2)
-    );
-    const endPage = Math.min(salesTotalPages, startPage + maxVisiblePages - 1);
-
-    if (endPage - startPage + 1 < maxVisiblePages) {
-      startPage = Math.max(1, endPage - maxVisiblePages + 1);
-    }
-
-    for (let i = startPage; i <= endPage; i++) {
-      pages.push(i);
-    }
-
-    return pages;
-  };
-
-  // Fetch medicines from API
-  
-    const fetchMedicines = async () => {
-  try {
-    setLoading(true);
-    console.log("Fetching medicines from API...");
-    const response = await axios.get(`${API_BASE_URL}/medicine/view`);
-    console.log("API Response:", response.data);
-
-    let medicineData = [];
-
-    if (response.data && Array.isArray(response.data.medicineList)) {
-      medicineData = response.data.medicineList;
-    } else {
-      console.error("Unexpected API response format:", response.data);
-      throw new Error(
-        "API returned unexpected data format - medicineList not found"
-      );
-    }
-
-    const transformedData = medicineData.map(
-      (item: any, index: number) => ({
-        id: item.Code || `med-${index}`,
-        Code: item.Code || "",
-        "Product Name": item["Product Name"] || "",
-        Unit: item.Unit || "",
-        Company: item.Company || "",
-        Quantity: Number(item.Quantity) || 0,
-        Price: Number(item.Price) || 0,
-      })
-    );
-
-    const sortedData = transformedData.sort((a, b) => {
-      const codeA = isNaN(a.Code) ? a.Code : Number(a.Code);
-      const codeB = isNaN(b.Code) ? b.Code : Number(b.Code);
-      return codeA > codeB ? 1 : codeA < codeB ? -1 : 0;
-    });
-
-    console.log("Sorted data:", sortedData);
-    setMedicines(sortedData);
-    setError(null);
-  } catch (err) {
-    console.error("Error fetching medicines:", err);
-    setError(
-      "Failed to fetch medicines from API. Please check if the API server is running."
-    );
-    setMedicines([]);
-  } finally {
-    setLoading(false);
-  }
-};
-
- useEffect(() => {
-  fetchMedicines();
-}, []);
-
-  const [salesSummary, setSalesSummary] = useState({
-    todayTotal: 0,
-    monthlyTotal: 0,
-    overallTotal: 0,
-  });
-
-  useEffect(() => {
-    const fetchSalesSummary = async () => {
-      try {
-        const res = await axios.get(`${API_BASE_URL}/api/sale/view`);
-        const salesData = res.data.sales;
-
-        const today = new Date().toISOString().split("T")[0]; // yyyy-mm-dd
-        const currentMonth = new Date().getMonth();
-        const currentYear = new Date().getFullYear();
-
-        let todayTotal = 0,
-          monthlyTotal = 0,
-          overallTotal = 0;
-
-        for (const sale of salesData) {
-          const saleDate = new Date(sale.saleDate);
-          overallTotal += sale.totalAmount;
-
-          if (saleDate.toISOString().split("T")[0] === today) {
-            todayTotal += sale.totalAmount;
-          }
-
-          if (
-            saleDate.getMonth() === currentMonth &&
-            saleDate.getFullYear() === currentYear
-          ) {
-            monthlyTotal += sale.totalAmount;
-          }
-        }
-
-        setSalesSummary({
-          todayTotal,
-          monthlyTotal,
-          overallTotal,
-        });
-      } catch (err) {
-        console.error("Failed to fetch sales summary", err);
-      }
-    };
-
-    fetchSalesSummary();
-  }, []);
-
-  useEffect(() => {
-  const fetchClosingStock = async () => {
-    try {
-      const currentYear = new Date().getFullYear();
-      const response = await axios.get(
-        `${API_BASE_URL}/api/closing-stock/current?year=${currentYear}`
-      );
-      
-      if (response.data.success) {
-        setClosingStock(response.data.data.closingStock);
-        setClosingStockYear(response.data.data.year);
-        setClosingStockNotes(response.data.data.notes || "");
-        setClosingStockUpdatedBy(response.data.data.lastUpdatedBy || "");
-      }
-    } catch (error) {
-      console.error("Failed to fetch closing stock:", error);
-    }
-  };
-
-  fetchClosingStock();
-}, []);
-
-
-// Delete Sale Handler
-
-// 5. REPLACE YOUR handleDeleteSale FUNCTION WITH THIS:
-const handleDeleteSale = async (saleId: string) => {
-  // Check admin permission
-  if (!canDelete()) {
-    alert('Only administrators can delete sales records.');
-    return;
-  }
-
-  if (!confirm('Are you sure you want to delete this sale? This will restore the medicine stock.')) {
-    return;
-  }
-
-  try {
-    const token = localStorage.getItem('token');
-    const response = await fetch(`${API_BASE_URL}/api/sale/${saleId}`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': token || '',
-        'Content-Type': 'application/json',
-      },
-    });
-
-    const result = await response.json();
-
-    if (response.ok) {
-      alert('Sale deleted successfully');
-      // Refresh sales list
-      const salesResponse = await fetch(`${API_BASE_URL}/api/sale/view`);
-      const salesData = await salesResponse.json();
-      if (salesData.success) {
-        setSales(salesData.sales);
-      }
-      // Refresh medicines list
-      fetchMedicines();
-    } else {
-      alert(result.message || 'Failed to delete sale');
-    }
-  } catch (error) {
-    console.error('Error deleting sale:', error);
-    alert('Error deleting sale');
-  }
-};
-
-// Edit Sale Handler
-
-// 6. UPDATE YOUR handleEditSale FUNCTION (add permission check at the start):
-const handleEditSale = async (saleId: string) => {
-  // Check edit permission
-  if (!canEdit()) {
-    alert('You do not have permission to edit sales records.');
-    return;
-  }
-
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/sale/${saleId}`);
-    const result = await response.json();
-
-    if (result.success) {
-      const sale = result.sale;
-      setEditSale({
-        patientId: sale.patientId,
-        patientName: sale.patientName,
-        medicines: sale.medicines,
-        saleDate: sale.saleDate,
-        discount: sale.discount?.toString() || '',
-        discountApprovedBy: sale.discountApprovedBy || '',
-      });
-      setEditingSaleId(saleId);
-      setIsEditingSale(true);
-    } else {
-      alert('Failed to fetch sale details');
-    }
-  } catch (error) {
-    console.error('Error fetching sale:', error);
-    alert('Error fetching sale details');
-  }
-};
-
-// Update Sale Handler
-
-// 7. UPDATE YOUR handleUpdateSale FUNCTION (add Authorization header):
-const handleUpdateSale = async () => {
-  if (!editSale.patientId || !editSale.patientName || editSale.medicines.length === 0) {
-    alert('Please fill all required fields and add at least one medicine');
-    return;
-  }
-
-  try {
-    const token = localStorage.getItem('token');
+    // =================== ONLY FILL PATIENT HEADER INFORMATION ===================
+    // Patient Name (Column B, Row 4)
+    worksheet.getCell("B3").value = `${patient.firstName} ${patient.lastName || ""}`.trim();
     
-    // Step 1: Update the sale
-    const response = await fetch(`${API_BASE_URL}/api/sale/${editingSaleId}`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': token || '',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        patientId: editSale.patientId,
-        patientName: editSale.patientName,
-        saleDate: editSale.saleDate,
-        medicines: editSale.medicines,
-        discount: editSale.discount ? parseFloat(editSale.discount) : 0,
-        discountApprovedBy: editSale.discountApprovedBy,
-      }),
+    // DATE (Column D, Row 4)
+    worksheet.getCell("D3").value = lastVisit.date || new Date().toLocaleDateString('en-GB');
+    
+    // Age / Gender (Column B, Row 5)
+    worksheet.getCell("B4").value = `${patient.age || ""} / ${patient.gender || ""}`;
+    
+    // Patient ID (Column D, Row 5)
+    worksheet.getCell("D4").value = patient.idno || "";
+    
+    // Sponsored by (if any) (Column B, Row 6)
+    worksheet.getCell("B5").value = lastVisit.sponsor || "";
+    
+    // BP/PULSE (Column D, Row 6) - LEFT BLANK to be filled physically
+    // worksheet.getCell("D6").value = "";
+    
+    // Appointment To (Column B, Row 7)
+    worksheet.getCell("B6").value = lastVisit.appointment || "";
+
+    // =================== EVERYTHING BELOW IS LEFT BLANK ===================
+    // Prakriti - Left blank to be filled physically by doctor
+    // Clinical Notes - Left blank to be filled physically by doctor
+    // Medicines Prescribed - Left blank to be filled physically by doctor
+    // Panchakarma / Therapies - Left blank to be filled physically by doctor
+
+    // =================== GENERATE AND SEND FILE ===================
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=prescription_${(patient.idno || "patient").replace(
+        /[\\/]/g,
+        "_"
+      )}_${new Date().toISOString().split('T')[0]}.xlsx`
+    );
+
+    res.send(buffer);
+  } catch (err) {
+    console.error("Error exporting prescription form:", err);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: err.message });
+  }
+};
+
+
+// FINAL VERSION - Add this to patientController.js
+// This version is optimized based on your screenshot template structure
+
+// CORRECTED VERSION - Add this to patientController.js
+// This function fetches therapies from the database, not from query parameters
+
+// COMPLETE FUNCTION - Replace the entire exportTherapyCashReceipt function in patientController.js
+// This version ONLY fixes alignment - NO dimension changes
+
+// ==========================================
+// FIXED: Therapy Receipt - Use TODAY's Date & Always Generate NEW Bill Numbers
+// Replace the exportTherapyCashReceipt function (starting at line 113)
+// ==========================================
+
+// ==========================================
+// COMPLETE FIXED FUNCTION - Replace entire exportTherapyCashReceipt
+// Lines 118-478 in patientController.js
+// ==========================================
+
+const exportTherapyCashReceipt = async (req, res) => {
+  try {
+    const patientId = req.params.id;
+    
+    // ✅ Accept therapy data from query params
+    const { therapyNames, therapySessions, therapyAmounts, discount, approvedBy: approvalBy, receivedAmount } = req.query;
+
+    const patient = await patientModel.findById(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
+    // ✅ Get LATEST visit (regardless of whether it has therapies)
+    let lastVisit = await visitModel
+      .findOne({ patientId: patient._id })
+      .sort({ createdAt: -1 });
+
+    if (!lastVisit) {
+      return res.status(404).json({ 
+        message: "No visit found. Please create a reappointment first." 
+      });
+    }
+
+    console.log(`📋 Found latest visit: ${lastVisit._id}, Date: ${lastVisit.date}`);
+
+    // ✅ If therapies provided from frontend, use them (replaces existing)
+    if (therapyNames && therapySessions && therapyAmounts) {
+      const namesArray = therapyNames.split(',').map(s => s.trim());
+      const sessionsArray = therapySessions.split(',').map(Number);
+      const amountsArray = therapyAmounts.split(',').map(Number);
+      
+      console.log(`📝 Updating visit with ${namesArray.length} NEW therapies from frontend`);
+      
+      // ✅ REPLACE therapies (don't append - this is for THIS visit only)
+      lastVisit.therapies = namesArray.map((name, index) => ({
+        name: name,
+        sessions: sessionsArray[index] || 1,
+        amount: amountsArray[index] || 0
+      }));
+      
+      // Update payment amounts - set to 0 initially, will be calculated from receivedAmount
+      lastVisit.therapyWithAmount = namesArray.map((name, index) => ({
+        name: name,
+        receivedAmount: 0  // Will be distributed based on actual receivedAmount
+      }));
+      
+      // Update discounts if provided
+      if (discount && Number(discount) > 0) {
+        // ✅ FIX: Never reassign lastVisit.discounts — it is a Mongoose subdocument.
+        // Reassigning it to a plain {} destroys the schema structure and causes
+        // a validation error on .save(). Just set .therapies directly.
+        if (!lastVisit.discounts) {
+          lastVisit.discounts = {};
+        }
+        lastVisit.discounts.therapies = namesArray.map(name => ({
+          name: name,
+          percentage: Number(discount),
+          approvedBy: approvalBy || ""
+        }));
+        lastVisit.markModified('discounts');
+      }
+      
+      await lastVisit.save();
+      console.log(`✅ Saved ${namesArray.length} therapies to current visit`);
+    }
+
+    // Get therapies from the current visit
+    const therapies = lastVisit.therapies || [];
+    
+    if (therapies.length === 0) {
+      return res.status(400).json({ 
+        message: "No therapies found. Please select therapies in the cash receipt dialog."
+      });
+    }
+
+    console.log(`✅ Using ${therapies.length} therapies from visit: ${lastVisit._id}`);
+    console.log(`   Visit Date: ${lastVisit.date}`);
+    console.log(`   Therapies: ${therapies.map(t => t.name).join(', ')}`);
+
+    // Limit to first 3 therapies for the receipt
+    const therapyList = therapies.slice(0, 3);
+
+    const today = new Date();
+    
+    // Generate NEW bill number and APPEND to array
+    const billNumber = await generateBillNumber('therapy');
+    const billDate = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+
+    console.log(`✨ Generated NEW therapy bill: ${billNumber}`);
+    console.log(`📅 Bill Date: ${billDate} (TODAY) | Visit Date: ${lastVisit.date}`);
+
+    // APPEND to array instead of overwriting
+    if (!lastVisit.therapyBills) {
+      lastVisit.therapyBills = [];
+    }
+
+    lastVisit.therapyBills.push({
+      billNumber: billNumber,
+      billDate: billDate,
+      therapies: therapyList.map(t => t.name),
+      createdAt: new Date()
     });
 
-    const result = await response.json();
+    await lastVisit.save();
+    console.log(`✅ Saved bill #${lastVisit.therapyBills.length} to visit: ${lastVisit._id}`);
 
-    if (response.ok) {
-      // Show success message
-      alert('Sale updated successfully! Your updated bill will download shortly.');
-      
-      // Step 2: Download the updated bill automatically
-      try {
-        const billResponse = await fetch(
-          `${API_BASE_URL}/api/sale/${editingSaleId}/download-bill`,
-          {
-            method: 'GET',
-            headers: {
-              'Authorization': token || '',
-            },
-          }
-        );
+    // Calculate totals from therapyWithAmount
+    let totalFee = 0;
+    let totalDiscount = 0;
 
-        if (billResponse.ok) {
-          // Get the blob from response
-          const blob = await billResponse.blob();
-          
-          // Create download link
-          const url = window.URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          
-          // Extract filename from Content-Disposition header or create default
-          // ✅ FIXED: Better filename extraction
-const contentDisposition = billResponse.headers.get('Content-Disposition');
-let fileName = `Updated_Invoice_${editSale.patientId}_${Date.now()}.xlsx`;
+    therapyList.forEach(therapy => {
+      const fee = Number(therapy.amount || 0);
+      totalFee += fee;
 
-if (contentDisposition) {
-  // Extract filename properly - match filename="..." or filename=...
-  const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-  if (fileNameMatch && fileNameMatch[1]) {
-    // Remove quotes and trim
-    fileName = fileNameMatch[1].replace(/['"]/g, '').trim();
-  }
-}
-
-// ✅ ENSURE .xlsx extension (no extra characters)
-if (!fileName.endsWith('.xlsx')) {
-  fileName = fileName.replace(/\.xlsx.*$/, '.xlsx'); // Remove anything after .xlsx
-  if (!fileName.endsWith('.xlsx')) {
-    fileName = fileName + '.xlsx'; // Add if missing
-  }
-}
-          
-          link.download = fileName;
-          
-          // Trigger download
-          document.body.appendChild(link);
-          link.click();
-          
-          // Cleanup
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(url);
-          
-          console.log('✅ Bill downloaded successfully');
-        } else {
-          console.error('Failed to download bill:', await billResponse.text());
-          alert('Sale updated successfully, but failed to download the bill. Please try downloading manually.');
-        }
-      } catch (billError) {
-        console.error('Error downloading bill:', billError);
-        alert('Sale updated successfully, but failed to download the bill. Please try downloading manually.');
+      // Find discount for this therapy
+      const therapyDiscount = lastVisit.discounts?.therapies?.find(
+        t => t.name === therapy.name
+      );
+      if (therapyDiscount) {
+        const discountAmount = (fee * Number(therapyDiscount.percentage || 0)) / 100;
+        totalDiscount += discountAmount;
       }
-      
-      // Step 3: Clean up and refresh
-      setIsEditingSale(false);
-      setEditingSaleId(null);
-      setEditSale({
-        patientId: '',
-        patientName: '',
-        medicines: [],
-        saleDate: '',
-        discount: '',
-        discountApprovedBy: '',
-      });
-      setEditCurrentMedicine({
-        medicineName: '',
-        batch: '',
-        hsn: '',
-        expiry: '',
-        pricePerUnit: '',
-        quantity: '',
-      });
-      
-      // Refresh sales list
-      const salesResponse = await fetch(`${API_BASE_URL}/api/sale/view`);
-      const salesData = await salesResponse.json();
-      if (salesData.success) {
-        setSales(salesData.sales);
+    });
+
+    const totalAfterDiscount = totalFee - totalDiscount;
+    
+    // Use receivedAmount from query params if provided, otherwise calculate from therapyWithAmount
+    const totalReceived = receivedAmount ? Number(receivedAmount) : 
+      therapyList.reduce((sum, therapy) => {
+        const therapyPayment = lastVisit.therapyWithAmount?.find(t => t.name === therapy.name);
+        return sum + Number(therapyPayment?.receivedAmount || 0);
+      }, 0);
+    
+    const balance = totalAfterDiscount - totalReceived;
+    const discountPercentage = totalFee > 0 ? ((totalDiscount / totalFee) * 100).toFixed(2) : 0;
+
+    // ✅ FIXED: Use different variable name to avoid conflict
+    const approvedByList = [];
+    therapyList.forEach(therapy => {
+      const therapyDiscount = lastVisit.discounts?.therapies?.find(
+        t => t.name === therapy.name
+      );
+      if (therapyDiscount?.approvedBy) {
+        approvedByList.push(therapyDiscount.approvedBy);
       }
-      
-      // Refresh medicines
-      fetchMedicines();
-    } else {
-      alert(result.message || 'Failed to update sale');
+    });
+    const approvedByNames = [...new Set(approvedByList)].join(", ") || "";
+
+    // Load Excel Template
+    const templatePath = path.join(
+      __dirname,
+      "../../assets/receiptGenerationTherapy.xlsx"
+    );
+    
+    if (!fs.existsSync(templatePath)) {
+      return res.status(404).json({ 
+        message: "Template file not found",
+        path: templatePath
+      });
     }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(templatePath);
+    const worksheet = workbook.getWorksheet("Cash Receipt") || workbook.getWorksheet("Sheet1");
+
+    if (!worksheet) {
+      return res.status(400).json({ 
+        message: "Worksheet 'Cash Receipt' or 'Sheet1' not found in template" 
+      });
+    }
+
+    // ✅ Use TODAY's date for the receipt
+    const date = today.toLocaleDateString('en-GB'); // DD/MM/YYYY format
+    const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`.trim();
+    const address = `${patient.houseno || ""}, ${patient.city || ""}`.trim();
+
+    console.log(`📅 Receipt Date: ${date} (TODAY)`);
+    console.log(`📋 Bill Number: ${billNumber}`);
+    console.log(`💰 Total: ₹${totalFee}, Received: ₹${totalReceived}, Balance: ₹${balance}`);
+
+    // Helper function to update cells safely
+    const updateCell = (cellAddress, value) => {
+      try {
+        const cell = worksheet.getCell(cellAddress);
+        cell.value = value;
+      } catch (error) {
+        console.error(`Error updating cell ${cellAddress}:`, error.message);
+      }
+    };
+
+    // Helper function to clear borders from a cell
+    const clearBorders = (cellAddress) => {
+      try {
+        const cell = worksheet.getCell(cellAddress);
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
+        };
+      } catch (error) {
+        console.error(`Error clearing borders ${cellAddress}:`, error.message);
+      }
+    };
+
+
+
+
+    // ==========================================
+    // FIRST COPY (Top Bill)
+    // ==========================================
+    
+    updateCell('B5', billNumber);
+    updateCell('E5', patient.idno || "");
+    updateCell('H5', date);  // ✅ TODAY's date
+
+    updateCell('B6', fullName);
+    updateCell('F6', patient.gender || "");
+    updateCell('H6', patient.age || "");
+
+    updateCell('B7', address);
+    updateCell('H7', patient.phone || "");
+
+    updateCell('B8', totalFee);
+    updateCell('E8', `${discountPercentage}%`);
+    updateCell('H8', approvedByNames);
+
+    updateCell('B9', totalAfterDiscount);
+    updateCell('E9', totalReceived);
+    updateCell('H9', balance);
+
+    // Therapy names — Copy 1
+    // Fixed rows: T1=A11, T2=A13, T3=A15. Bold cells are in template, untouched.
+    const copy1Rows = [11, 13, 15];
+    therapyList.slice(0, 3).forEach((therapy, index) => {
+      const cell = worksheet.getCell(`A${copy1Rows[index]}`);
+      cell.value = `${therapy.name.toUpperCase()}(${therapy.sessions || 1})`;
+      cell.font = { bold: true, size: 11 };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
+    });
+
+    // ==========================================
+    // SECOND COPY (Middle Bill)
+    // ==========================================
+    
+    updateCell('B23', billNumber);
+    updateCell('E23', patient.idno || "");
+    updateCell('H23', date);
+
+    updateCell('B24', fullName);
+    updateCell('F24', patient.gender || "");
+    updateCell('H24', patient.age || "");
+
+    updateCell('B25', address);
+    updateCell('H25', patient.phone || "");
+
+    updateCell('B26', totalFee);
+    updateCell('E26', `${discountPercentage}%`);
+    updateCell('H26', approvedByNames);
+
+    updateCell('B27', totalAfterDiscount);
+    updateCell('E27', totalReceived);
+    updateCell('H27', balance);
+
+    // Therapy names — Copy 2
+    // Fixed rows: T1=A29, T2=A31, T3=A33. Bold cells are in template, untouched.
+    const copy2Rows = [29, 31, 33];
+    therapyList.slice(0, 3).forEach((therapy, index) => {
+      const cell = worksheet.getCell(`A${copy2Rows[index]}`);
+      cell.value = `${therapy.name.toUpperCase()}(${therapy.sessions || 1})`;
+      cell.font = { bold: true, size: 11 };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
+    });
+
+    // ==========================================
+    // STRIP SECTION (Bottom)
+    // ==========================================
+    
+    // Strip header
+    updateCell('B36', patient.idno || "");
+    updateCell('B37', billNumber);
+    updateCell('E36', fullName);
+    updateCell('H36', date);
+
+    // Therapy names — Strip
+    // Fixed rows: T1=A38, T2=A40, T3=A42. Bold cells are in template, untouched.
+    const stripRows = [38, 40, 42];
+    therapyList.slice(0, 3).forEach((therapy, index) => {
+      const cell = worksheet.getCell(`A${stripRows[index]}`);
+      cell.value = `${therapy.name.toUpperCase()}(${therapy.sessions || 1})`;
+      cell.font = { bold: true, size: 10 };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
+    });
+
+    // Send file
+    const buffer = await workbook.xlsx.writeBuffer();
+    const cleanPatientName = fullName.replace(/[^a-zA-Z0-9]/g, '_');
+    const cleanBillNumber = billNumber.replace(/\//g, '_');
+    const therapyNamesForFile = therapyList.map(t => t.name).join('_').substring(0, 50);
+
+    const fileName = `${cleanBillNumber}_${cleanPatientName}_therapy_receipt_${date.replace(/\//g, '-')}.xlsx`;
+
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.send(buffer);
+
+    console.log(`✅ Therapy receipt generated successfully`);
+    console.log(`   File: ${fileName}`);
+
   } catch (error) {
-    console.error('Error updating sale:', error);
-    alert('Error updating sale');
+    console.error("❌ Error exporting therapy cash receipt:", error);
+    res.status(500).json({ 
+      message: "Internal Server Error", 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
-// Add Medicine to Edit Sale
-const addMedicineToEditSale = () => {
-  if (
-    !editCurrentMedicine.medicineName ||
-    !editCurrentMedicine.pricePerUnit ||
-    !editCurrentMedicine.quantity
-  ) {
-    alert("Please fill in medicine name, price, and quantity.");
-    return;
+const exportPrakritiCashReceipt = async (req, res) => {
+  try {
+    const patientId = req.params.id;
+    const {
+      feeAmount,
+      receivedAmount,
+      purpose,
+      therapyName,
+      discount,
+      approvalby,
+    } = req.query;
+
+    const patient = await patientModel.findById(patientId);
+    if (!patient) {
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
+    // ✅ Get most recent visit (for consultation/prakriti)
+const lastVisit = await visitModel
+  .findOne({ patientId: patient._id })
+  .sort({ createdAt: -1 });
+
+    if (!lastVisit) {
+      return res.status(404).json({ message: "No last visit found" });
+    }
+
+    // ✅ FIX 1: ALWAYS Generate NEW Bill Number for EACH receipt
+    // Don't reuse existing bill numbers - each receipt should be unique
+    let billNumber;
+
+    if (purpose === "Consultation") {
+      billNumber = await generateBillNumber('consultation');
+      lastVisit.consultationBillNumber = billNumber;
+      console.log(`✨ Generated NEW consultation bill: ${billNumber}`);
+      
+    } else if (purpose === "Prakriti Parikshan") {
+      billNumber = await generateBillNumber('prakriti');
+      lastVisit.prakritiBillNumber = billNumber;
+      console.log(`✨ Generated NEW prakriti bill: ${billNumber}`);
+      
+    } else {
+      return res.status(400).json({ 
+        message: "Invalid purpose. Must be 'Consultation' or 'Prakriti Parikshan'" 
+      });
+    }
+
+    console.log(`📝 Bill Number: ${billNumber} for ${purpose}`);
+
+    // ✅ FIX 2: Calculate amounts properly
+    const numericFee = Number(feeAmount);
+    const numericReceived = Number(receivedAmount);
+    const numericDiscount = Number(discount);
+    const totalAfterDiscount = numericFee - (numericFee * numericDiscount) / 100;
+    const balance = totalAfterDiscount - numericReceived;
+
+    // ✅ FIX 3: Update visit fields based on purpose with proper logging
+    if (purpose === "Consultation") {
+      lastVisit.consultationamount = numericFee;
+      lastVisit.balance.consultation = balance;
+      lastVisit.discounts.consultation = {
+        percentage: numericDiscount,
+        approvedBy: approvalby,
+      };
+      
+      console.log(`💰 Consultation - Fee: ₹${numericFee}, Discount: ${numericDiscount}%, Received: ₹${numericReceived}, Balance: ₹${balance}`);
+      
+    } else if (purpose === "Prakriti Parikshan") {
+      lastVisit.prakritiparikshanamount = numericFee;
+      lastVisit.balance.prakritiparikshan = balance;
+      lastVisit.discounts.prakritiparikshan = {
+        percentage: numericDiscount,
+        approvedBy: approvalby,
+      };
+      
+      console.log(`💰 Prakriti - Fee: ₹${numericFee}, Discount: ${numericDiscount}%, Received: ₹${numericReceived}, Balance: ₹${balance}`);
+    }
+
+    // ✅ FIX 4: SAVE visit BEFORE generating Excel (critical!)
+    console.log(`💾 Saving ${purpose} visit with bill number: ${billNumber}`);
+    await lastVisit.save();
+    console.log(`✅ Visit saved successfully - ID: ${lastVisit._id}`);
+
+    // Load Excel Template
+    const templatePath = path.join(
+      __dirname,
+      "../../assets/receiptGeneration.xlsx"
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(templatePath);
+    const worksheet = workbook.getWorksheet("Cash Receipt");
+
+    if (!worksheet) {
+      return res.status(400).json({ message: "Worksheet not found" });
+    }
+
+    const date = new Date().toLocaleDateString();
+    const fullName = `${patient.firstName || ""} ${patient.lastName || ""}`;
+    const address = `${patient.houseno || ""}, ${patient.city || ""}`;
+
+    const updateCells = (cellMap) => {
+      for (const [cell, value] of Object.entries(cellMap)) {
+        worksheet.getCell(cell).value = value;
+      }
+    };
+
+    const feeCellMap = {
+      // ✅ Bill Number (Column B, Row 6 and 26)
+      B6: billNumber,
+      B26: billNumber,
+
+      // Receipt Title
+      D5: `Cash Receipt for ${purpose || "Unknown Purpose"}`,
+      D25: `Cash Receipt for ${purpose || "Unknown Purpose"}`,
+
+      // ✅ ID No. moved to Column D (Row 6 and 26)
+      E6: patient.idno,
+      E26: patient.idno,
+
+      // Date
+      H6: lastVisit.date,
+      H26: lastVisit.date,
+
+      // Patient Details
+      B7: fullName,
+      B27: fullName,
+
+      F7: patient.gender || "",
+      F27: patient.gender || "",
+
+      H7: patient.age || "",
+      H27: patient.age || "",
+
+      B8: address,
+      B28: address,
+
+      B9: patient.district || "",
+      B29: patient.district || "",
+
+      E9: patient.state || "",
+      E29: patient.state || "",
+
+      H9: patient.pin || "",
+      H29: patient.pin || "",
+
+      B10: patient.phone || "",
+      B30: patient.phone || "",
+
+      // Financial Details
+      E10: numericFee,
+      E30: numericFee,
+
+      E11: numericDiscount,
+      E31: numericDiscount,
+
+      H11: approvalby,
+      H31: approvalby,
+
+      E12: totalAfterDiscount,
+      E32: totalAfterDiscount,
+
+      E13: numericReceived,
+      E33: numericReceived,
+
+      E14: balance,
+      E34: balance,
+
+      // Optional therapy name display
+      A18:
+        purpose === "Therapy" && therapyName ? therapyName.toUpperCase() : "",
+      A38:
+        purpose === "Therapy" && therapyName ? therapyName.toUpperCase() : "",
+    };
+
+    updateCells(feeCellMap);
+
+    // ✅ Send file with bill number in filename
+    const buffer = await workbook.xlsx.writeBuffer();
+    const cleanPatientName = fullName.replace(/[^a-zA-Z0-9]/g, '_');
+    const cleanPurpose = purpose.replace(/\s+/g, '_');
+    const cleanBillNumber = billNumber.replace(/\//g, '_');
+
+    const fileName = `${cleanBillNumber}_${cleanPatientName}_receipt_${cleanPurpose}.xlsx`;
+
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.send(buffer);
+    
+    console.log(`📥 Receipt downloaded: ${fileName}`);
+    
+  } catch (error) {
+    console.error("❌ Error exporting cash receipt:", error);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: error.message });
   }
-
-  const newMed = {
-    id: `edit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ UNIQUE ID
-    medicineName: editCurrentMedicine.medicineName,
-    batch: editCurrentMedicine.batch,
-    hsn: editCurrentMedicine.hsn,
-    expiry: editCurrentMedicine.expiry,
-    pricePerUnit: parseFloat(editCurrentMedicine.pricePerUnit),
-    quantity: parseFloat(editCurrentMedicine.quantity),
-    totalPrice:
-      parseFloat(editCurrentMedicine.pricePerUnit) *
-      parseFloat(editCurrentMedicine.quantity),
-  };
-
-  setEditSale({
-    ...editSale,
-    medicines: [...editSale.medicines, newMed],
-  });
-
-  setEditCurrentMedicine({
-    medicineName: "",
-    batch: "",
-    hsn: "",
-    expiry: "",
-    pricePerUnit: "",
-    quantity: "",
-  });
-  
-  setShowEditSuggestions(false);
 };
 
-// Remove Medicine from Edit Sale
-const removeMedicineFromEditSale = (medicineId: string) => {
-  setEditSale({
-    ...editSale,
-    medicines: editSale.medicines.filter((m) => m.id !== medicineId),
-  });
-};
-
-// Calculate Edit Sale Total
-const calculateEditSaleTotal = () => {
-  const subtotal = editSale.medicines.reduce(
-    (sum, med) => sum + med.totalPrice,
-    0
-  );
-  const discountAmount = (subtotal * (parseFloat(editSale.discount) || 0)) / 100;
-  const subtotalAfterDiscount = subtotal - discountAmount;
-  const sgst = subtotal * 0.025;
-  const cgst = subtotal * 0.025;
-  const totalBeforeRound = subtotalAfterDiscount;
-  const totalAmount = Math.round(totalBeforeRound);
-  const roundoff = totalAmount - totalBeforeRound;
-
-  return {
-    subtotal,
-    discountAmount,
-    sgst,
-    cgst,
-    roundoff,
-    totalAmount,
-  };
-};
-
-
-
-
-const handleUpdateClosingStock = async () => {
-  if (!editClosingStockValue || editClosingStockValue.trim() === "") {
-    alert("⚠️ Please enter a valid closing stock value");
-    return;
-  }
-
-  if (!closingStockUpdatedBy || closingStockUpdatedBy.trim() === "") {
-    alert("⚠️ Please enter your name in the 'Updated By' field");
-    return;
-  }
+// ===================================================================
+// Key Changes Made:
+// ===================================================================
+// 1. REMOVED the bill number reuse logic (if lastVisit.consultationBillNumber)
+// 2. ALWAYS generate new bill numbers for each receipt
+// 3. Added comprehensive console logging for debugging
+// 4. Ensured visit.save() happens BEFORE Excel generation
+// 5. Added detailed logging of amounts, discounts, and balances
+// ===================================================================
+const prescriptionDone = async (req, res) => {
+  const {
+    visitId,
+    observation,
+    medicines,
+    therapies,
+    rogParikshan,
+    nadiParikshaFindings,
+    knownCaseOf,
+    otherObservations,
+  } = req.body;
 
   try {
-    console.log("📤 Sending update request with data:", {
-      year: closingStockYear,
-      closingStock: parseInt(editClosingStockValue),
-      lastUpdatedBy: closingStockUpdatedBy,
-      notes: closingStockNotes
-    });
-
-    const response = await axios.put(
-      `${API_BASE_URL}/api/closing-stock/update`,
+    const visit = await visitModel.findByIdAndUpdate(
+      visitId,
       {
-        year: closingStockYear,
-        closingStock: parseInt(editClosingStockValue),
-        lastUpdatedBy: closingStockUpdatedBy,
-        notes: closingStockNotes
-      }
+        observation,
+        medicines,
+        therapies,
+        rogParikshan: {
+          stool: rogParikshan?.stool || "",
+          urine: rogParikshan?.urine || "",
+          appetite: rogParikshan?.appetite || "",
+          sleep: rogParikshan?.sleep || "",
+          tongue: rogParikshan?.tongue || "",
+        },
+        nadiParikshaFindings,
+        knownCaseOf,
+        otherObservations,
+        status: "done",
+      },
+      { new: true }
     );
 
-    console.log("📥 Received response:", response.data);
-
-    if (response.data.success) {
-      setClosingStock(parseInt(editClosingStockValue));
-      setIsEditingClosingStock(false);
-      setEditClosingStockValue("");
-      alert(`✅ Closing stock for ${closingStockYear} updated successfully to ${parseInt(editClosingStockValue).toLocaleString()} units!`);
-    } else {
-      alert(`❌ ${response.data.message || 'Failed to update closing stock'}`);
+    if (!visit) {
+      return res.status(404).json({
+        status: 0,
+        message: "Visit not found",
+      });
     }
+
+    res.status(200).json({
+      status: 1,
+      message: "Prescription updated successfully",
+      visit,
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 0,
+      message: "Error updating prescription",
+      error: err.message,
+    });
+  }
+};
+
+const updateTherapy = async (req, res) => {
+  try {
+    const patientId = req.params.id;
+    const { therapyname, therapyamount } = req.body;
+
+    if (!therapyname || !therapyamount) {
+      return res.status(400).json({
+        status: 0,
+        message: "therapyname and therapyamount are required",
+      });
+    }
+
+    const lastVisit = await visitModel
+      .findOne({ patientId })
+      .sort({ createdAt: -1 });
+
+    if (!lastVisit) {
+      return res.status(404).json({
+        status: 0,
+        message: "Last visit not found",
+      });
+    }
+
+    lastVisit.therapyname = therapyname.trim();
+    lastVisit.therapyamount = parseFloat(therapyamount);
+    await lastVisit.save();
+
+    res.json({
+      status: 1,
+      message: "Therapy details updated successfully",
+      updatedVisit: lastVisit,
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 0,
+      message: "Error updating therapy details",
+      error: err.message,
+    });
+  }
+};
+// const axios = require("axios"); // If you're using internal request or move to DB query directly
+const updateVisitPurposeWithAmount = async (req, res) => {
+  const { id: patientId } = req.params;
+  const { purpose, amount } = req.body;
+
+  try {
+    const lastVisit = await visitModel
+      .findOne({ patientId })
+      .sort({ createdAt: -1 });
+
+    if (!lastVisit || !lastVisit._id) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Latest visit not found" });
+    }
+
+    lastVisit.others = purpose;
+    lastVisit.othersamount = amount;
+    await lastVisit.save();
+
+    res.json({ success: true, data: lastVisit });
   } catch (error) {
-    console.error("❌ Error updating closing stock:", error);
-    console.error("Error response:", error.response?.data);
-    console.error("Error status:", error.response?.status);
-    
-    const errorMessage = error.response?.data?.message || error.message || 'Unknown error occurred';
-    alert(`❌ Failed to update closing stock.\n\nError: ${errorMessage}`);
+    console.error("Error updating visit purpose:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update visit with custom purpose",
+      error: error.message,
+    });
+  }
+};
+const updatePrakritiAmount = async (req, res) => {
+  const { id: patientId } = req.params;
+
+  try {
+    const lastVisit = await visitModel
+      .findOne({ patientId })
+      .sort({ createdAt: -1 });
+
+    if (!lastVisit || !lastVisit._id) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No last visit found" });
+    }
+
+    lastVisit.prakritiparikshanamount = 3000;
+    await lastVisit.save();
+
+    res.json({ success: true, data: lastVisit });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error updating prakriti parikshan amount",
+      error: error.message,
+    });
   }
 };
 
-  const handleAddMedicine = async () => {
-    if (newMedicine.productName && newMedicine.quantity) {
-      const medicine: Medicine = {
-        id: Date.now().toString(),
-        Code: newMedicine.code || Date.now().toString(),
-        "Product Name": newMedicine.productName,
-        Unit: newMedicine.unit,
-        Company: newMedicine.company,
-        Quantity: parseInt(newMedicine.quantity),
-        Price: parseFloat(newMedicine.price) || 0,
-      };
-
-      try {
-        const res = await axios.post(
-          `${API_BASE_URL}/medicine/insert`,
-          medicine
-        );
-        if (res.data.status === 1) {
-          setMedicines((prev: Medicine[]) => [...prev, medicine]);
-          resetMedicineForm();
-          setIsAddingMedicine(false);
-          alert("Medicine added successfully!");
-        } else {
-          alert("Error: " + res.data.message);
-        }
-      } catch (error) {
-        console.error("Error adding medicine:", error);
-        alert("Something went wrong while adding medicine.");
-      }
+const exportLastPatientToExcel = async (req, res) => {
+  try {
+    const patient = await patientModel.findOne().sort({ _id: -1 });
+    if (!patient) {
+      return res.status(404).json({ message: "No patient found" });
     }
-  };
 
-  const handleEditMedicine = async () => {
-    if (newMedicine.productName && newMedicine.quantity && editingMedicineId) {
-      const updatedMedicine: Medicine = {
-        id: editingMedicineId,
-        Code: newMedicine.code,
-        "Product Name": newMedicine.productName,
-        Unit: newMedicine.unit,
-        Company: newMedicine.company,
-        Quantity: parseInt(newMedicine.quantity),
-        Price: parseFloat(newMedicine.price) || 0,
-      };
+    const templatePath = path.join(
+      __dirname,
+      "../../assets/patientRegistration.xlsx"
+    );
 
-      try {
-        const response = await axios.put(
-          `${API_BASE_URL}/medicine/update/${newMedicine.code}`,
-          updatedMedicine
-        );
+    // Read file buffer and load into workbook
+    const templateBuffer = fs.readFileSync(templatePath);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(templateBuffer);
 
-        if (response.data.status === 1) {
-          setMedicines(
-            medicines.map((med) =>
-              med.id === editingMedicineId ? updatedMedicine : med
-            )
-          );
-
-          resetMedicineForm();
-          setIsEditingMedicine(false);
-          setEditingMedicineId(null);
-        } else {
-          alert(response.data.message || "Failed to update medicine");
-        }
-      } catch (error) {
-        console.error("Error updating medicine:", error);
-        alert("Error updating medicine. Please try again.");
-      }
+    const worksheet = workbook.getWorksheet("Sheet1");
+    if (!worksheet) {
+      return res.status(400).json({
+        message: "Sheet 'Sheet1' not found in template",
+      });
     }
-  };
 
-  const resetMedicineForm = () => {
-    setNewMedicine({
-      code: "",
-      productName: "",
-      unit: "",
-      company: "",
-      quantity: "",
-      price: "",
+    const fields = {
+      5: `${patient.firstName || ""} ${patient.lastName || ""}`,
+      6: patient.gender || "",
+      7: patient.age || "",
+      8: patient.phone || "",
+      9: patient.email || "",
+      10: new Date().toLocaleDateString(),
+      11: new Date().toLocaleTimeString(),
+      12: patient.district || "",
+      13: `${patient.city || ""} / ${patient.state || ""} / ${
+        patient.pin || ""
+      }`,
+      14: patient.occupation || "",
+      15: patient.maritalStatus || "",
+      16: `Name: ${patient.emergencyContactName || ""}, Phone: ${
+        patient.emergencyContactPhone || ""
+      }`,
+      17: patient.aadharnum || "",
+      18: patient.sponsor || "",
+    };
+
+    for (const [rowNumber, value] of Object.entries(fields)) {
+      worksheet.getCell(`B${rowNumber}`).value = value;
+    }
+
+    // Set response headers
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=exported_patient.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (err) {
+    console.error("Error exporting last patient:", err);
+    res.status(500).json({
+      message: "Internal Server Error",
+      error: err.message,
     });
-  };
+  }
+};
 
-  const openEditModal = (medicine: Medicine) => {
-    setNewMedicine({
-      code: medicine.Code,
-      productName: medicine["Product Name"],
-      unit: medicine.Unit,
-      company: medicine.Company,
-      quantity: medicine.Quantity.toString(),
-      price: medicine.Price.toString(),
+const patientDetailsInsert = async (req, res) => {
+  try {
+    const formattedDate = req.body.date;
+
+    const {
+      firstName,
+      lastName,
+      age,
+      gender,
+      maritalStatus,
+      occupation,
+      phone,
+      email,
+      aadharnum,
+      houseno,
+      city,
+      state,
+      district,
+      pin,
+      emergencyContactName,
+      emergencyContactPhone,
+      appointment,
+      department,
+      medicalHistory,
+      sponsor,
+      consultationamount = 0,
+      prakritiparikshanamount = 0,
+      others = "",
+      othersamount = 0,
+      discounts = {},
+      rogParikshan = {},
+      nadiParikshaFindings = "",
+      knownCaseOf = "",
+      otherObservations = "",
+      balance = {},
+    } = req.body;
+
+    // ✅ Uniqueness check FIRST
+    const duplicatePatient = await patientModel.findOne({
+      firstName,
+      lastName,
+      phone,
     });
-    setEditingMedicineId(medicine.id);
-    setIsEditingMedicine(true);
-  };
 
-  const handleDeleteMedicine = async (Code: string) => {
-    try {
-      const res = await axios.delete(
-        `${API_BASE_URL}/medicine/delete/${Code}`
+    if (duplicatePatient) {
+      return res.status(409).send({
+        status: 0,
+        message:
+          "Patient already registered. Found in patient management. Please schedule a reappointment.",
+        existingPatientId: duplicatePatient.idno,
+      });
+    }
+
+    const query = { $or: [] };
+    if (aadharnum) query.$or.push({ aadharnum });
+    if (email) query.$or.push({ email });
+
+    let patient = null;
+    if (query.$or.length > 0) {
+      patient = await patientModel.findOne(query);
+    }
+
+    let savedPatient = patient;
+
+    if (!patient) {
+      // ✅ NOW generate counter and ID
+      const counter = await counterModel.findOneAndUpdate(
+        { name: "patient_id_counter" },
+        { $inc: { value: 1 } },
+        { new: true, upsert: true }
       );
-      if (res.data.status === 1) {
-        setMedicines((prev) => prev.filter((med) => med.Code !== Code));
-        alert("Medicine deleted successfully!");
-      } else {
-        alert("Delete failed: " + res.data.message);
-      }
-    } catch (err) {
-      console.error("Error deleting medicine:", err);
-      alert("Something went wrong while deleting medicine.");
+      const nextId = counter.value;
+      const customId = `BD/N/C50/${nextId}`;
+
+      const patientData = {
+        idno: customId,
+        firstName,
+        age,
+        gender,
+        phone,
+        houseno,
+        city,
+        state,
+        district,
+      };
+
+      if (lastName) patientData.lastName = lastName;
+      if (maritalStatus) patientData.maritalStatus = maritalStatus;
+      if (occupation) patientData.occupation = occupation;
+      if (email) patientData.email = email;
+      if (aadharnum) patientData.aadharnum = aadharnum;
+      if (medicalHistory) patientData.medicalHistory = medicalHistory;
+      if (emergencyContactName)
+        patientData.emergencyContactName = emergencyContactName;
+      if (emergencyContactPhone)
+        patientData.emergencyContactPhone = emergencyContactPhone;
+      if (pin) patientData.pin = pin;
+
+      savedPatient = new patientModel(patientData);
+      await savedPatient.save();
     }
-  };
 
-  const getLowStockMedicines = () => {
-    return medicines.filter((med) => med.Quantity <= MIN_STOCK);
-  };
+    const visitData = {
+      patientId: savedPatient._id,
+      date: formattedDate,
+      appointment,
+      consultationamount,
+      prakritiparikshanamount,
+      therapies: [],
+      therapyWithAmount: [],
+      medicines: [],
+      others,
+      othersamount,
+      observation: "",
+      status: "pending",
+      discounts: {
+        consultation: discounts.consultation || {},
+        prakritiparikshan: discounts.prakritiparikshan || {},
+        therapies: Array.isArray(discounts.therapies)
+          ? discounts.therapies
+          : [],
+        others: discounts.others || {},
+      },
+      rogParikshan: {
+        stool: rogParikshan.stool || "",
+        urine: rogParikshan.urine || "",
+        appetite: rogParikshan.appetite || "",
+        sleep: rogParikshan.sleep || "",
+        tongue: rogParikshan.tongue || "",
+      },
+      nadiParikshaFindings,
+      knownCaseOf,
+      otherObservations,
+      balance: {
+        consultation: balance.consultation || 0,
+        prakritiparikshan: balance.prakritiparikshan || 0,
+        therapies: Array.isArray(balance.therapies) ? balance.therapies : [],
+        others: Array.isArray(balance.others) ? balance.others : [],
+      },
+    };
 
-  const getCurrentStock = () => {
-  return medicines.reduce((total, med) => total + (med.Quantity || 0), 0);
-};
-  const handleModalCancel = () => {
-    resetMedicineForm();
-    setIsAddingMedicine(false);
-    setIsEditingMedicine(false);
-    setEditingMedicineId(null);
-  };
+    if (department) visitData.department = department;
+    if (sponsor) visitData.sponsor = sponsor;
 
-  // Sale related functions
-  
-const addMedicineToSale = () => {
-  if (
-    !currentMedicine.medicineName ||
-    !currentMedicine.pricePerUnit ||
-    !currentMedicine.quantity
-  ) {
-    alert("Please fill in medicine name, price, and quantity.");
-    return;
-  }
+    const visit = new visitModel(visitData);
+    await visit.save();
 
-  // ✅ FIX: Check stock before adding medicine to bill
-  const requestedQty = parseFloat(currentMedicine.quantity);
-  if (selectedMedicineStock !== null) {
-    if (selectedMedicineStock === 0) {
-      alert(`⚠️ Out of Stock!\n"${currentMedicine.medicineName}" is currently out of stock (0 units available). Cannot add to bill.`);
-      return;
-    }
-    if (requestedQty > selectedMedicineStock) {
-      alert(`⚠️ Insufficient Stock!\nOnly ${selectedMedicineStock} unit(s) of "${currentMedicine.medicineName}" available in inventory.\nYou requested ${requestedQty} unit(s).`);
-      return;
-    }
-  }
-
-  const newMed = {
-    id: `sale-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ✅ UNIQUE ID
-    medicineName: currentMedicine.medicineName,
-    batch: currentMedicine.batch,
-    hsn: currentMedicine.hsn,
-    expiry: currentMedicine.expiry,
-    pricePerUnit: parseFloat(currentMedicine.pricePerUnit),
-    quantity: parseFloat(currentMedicine.quantity),
-    totalPrice:
-      parseFloat(currentMedicine.pricePerUnit) *
-      parseFloat(currentMedicine.quantity),
-  };
-
-  setNewSale({
-    ...newSale,
-    medicines: [...newSale.medicines, newMed],
-  });
-
-  setCurrentMedicine({
-    medicineName: "",
-    batch: "",
-    hsn: "",
-    expiry: "",
-    pricePerUnit: "",
-    quantity: "",
-  });
-  
-  // ✅ FIX: Reset stock tracker after medicine is added
-  setSelectedMedicineStock(null);
-  setShowSuggestions(false);
-};
-
-  const removeMedicineFromSale = (medicineId: string) => {
-    setNewSale({
-      ...newSale,
-      medicines: newSale.medicines.filter((med) => med.id !== medicineId),
+    res.send({
+      status: 1,
+      message: "Patient visit recorded successfully",
+      idno: savedPatient.idno,
     });
-  };
-
-  const calculateSaleTotal = () => {
-  const subtotal = newSale.medicines.reduce(
-    (total, med) => total + med.totalPrice,
-    0
-  );
-
-  const discountPercent =
-    !isNaN(parseFloat(newSale.discount)) && newSale.discount.trim() !== ""
-      ? parseFloat(newSale.discount)
-      : 0;
-
-  const discountAmount = (subtotal * discountPercent) / 100;
-  const subtotalAfterDiscount = subtotal - discountAmount;
-
-  // GST calculated but not added to total
-  const sgst = subtotal * 0.025;
-  const cgst = subtotal * 0.025;
-
-  const totalAmount = Math.round(subtotalAfterDiscount);
-  const roundoff = totalAmount - subtotalAfterDiscount;
-
-  return { subtotal, discountAmount, sgst, cgst, totalAmount, roundoff };
+  } catch (err) {
+    res.send({
+      status: 0,
+      message: "Error while saving patient/visit",
+      error: err.message,
+    });
+  }
 };
 
-  const [enquiryList, setEnquiryList] = useState([]);
-  useEffect(() => {
-    const fetchEnquiries = async () => {
-      try {
-        const response = await axios.get(
-          `${API_BASE_URL}/api/website/enquiry/view`
-        );
-        if (Array.isArray(response.data.enquiryList)) {
-          setEnquiryList(response.data.enquiryList);
-        }
-      } catch (err) {
-        console.error("Failed to fetch patient list", err);
-      }
-    };
+const addVisit = async (req, res) => {
+  try {
+    const {
+      idno,
+      appointment,
+      department,
+      sponsor,
+      consultationamount = 0,
+      prakritiparikshanamount = 0,
+      others = "",
+      othersamount = 0,
+      discounts = {},
+      rogParikshan = {},
+      nadiParikshaFindings = "",
+      knownCaseOf = "",
+      otherObservations = "",
+      balance = {},
+      date,
+    } = req.body;
+    
 
-    fetchEnquiries();
-  }, []);
-
-  useEffect(() => {
-    const found = enquiryList.find((p) => p.idno === newSale.patientId);
-    if (found) {
-      const fullName = `${found.firstName} ${found.lastName}`.trim();
-      setNewSale((prev) => ({ ...prev, patientName: fullName }));
-    } else {
-      setNewSale((prev) => ({ ...prev, patientName: "" }));
+    if (!idno || !appointment || !date) {
+      return res.status(400).json({
+        status: 0,
+        message: "Missing required fields: idno, appointment, or date",
+      });
     }
-  }, [newSale.patientId, enquiryList]);
 
-  const generateExcelReceipt = async (sale) => {
-  // ✅ Use bill number from backend (already in sale object)
-  const invoiceNumber = sale.billNumber || 'DRAFT';
+    const patient = await patientModel.findById(idno);
+    if (!patient) {
+      return res.status(404).json({
+        status: 0,
+        message: "Patient not found with provided ID",
+      });
+    }
 
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet("Sale Receipt", {
-    pageSetup: { 
-      paperSize: 9, 
-      orientation: "portrait",
-      fitToPage: true,
-      fitToHeight: 1,
-      fitToWidth: 1,
-    },
-  });
+   const billNumbers = {};
 
-  // Function to generate a single bill starting at a specific row
-  const generateBill = (startRow: number) => {
-    let rowIdx = startRow;
+// ✅ FIXED: Generate bill numbers with logging
+if (consultationamount && consultationamount > 0) {
+  const billNumber = await generateBillNumber('consultation');
+  billNumbers.consultationBillNumber = billNumber;
+  console.log(`✅ Generated consultation bill: ${billNumber}`);
+}
 
-    // -------------------- Clinic Header --------------------
-    const headerStyle = {
-      alignment: { horizontal: "center" },
-      font: { bold: true, size: 14 },
+if (prakritiparikshanamount && prakritiparikshanamount > 0) {
+  const billNumber = await generateBillNumber('prakriti');
+  billNumbers.prakritiBillNumber = billNumber;
+  console.log(`✅ Generated prakriti bill: ${billNumber}`);
+}
+
+    const visitData = {
+      patientId: patient._id,
+      ...billNumbers,
+      date,
+      appointment,
+      consultationamount,
+      prakritiparikshanamount,
+      therapies: [],
+      therapyWithAmount: [],
+      medicines: [],
+      others,
+      othersamount,
+      observation: "",
+      status: "pending",
+      discounts: {
+        consultation: discounts.consultation || {},
+        prakritiparikshan: discounts.prakritiparikshan || {},
+        therapies: Array.isArray(discounts.therapies)
+          ? discounts.therapies
+          : [],
+        others: discounts.others || {},
+      },
+      rogParikshan: {
+        stool: rogParikshan.stool || "",
+        urine: rogParikshan.urine || "",
+        appetite: rogParikshan.appetite || "",
+        sleep: rogParikshan.sleep || "",
+        tongue: rogParikshan.tongue || "",
+      },
+      nadiParikshaFindings,
+      knownCaseOf,
+      otherObservations,
+      balance: {
+        consultation: balance.consultation || 0,
+        prakritiparikshan: balance.prakritiparikshan || 0,
+        therapies: Array.isArray(balance.therapies) ? balance.therapies : [],
+        others: Array.isArray(balance.others) ? balance.others : [],
+      },
     };
 
-    worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
-    worksheet.getCell(`A${rowIdx}`).value = "IMMUNITY CLINIC";
-    Object.assign(worksheet.getCell(`A${rowIdx}`), headerStyle);
-    rowIdx++;
+    // Add optional fields if provided
+    if (department) visitData.department = department;
+    if (sponsor) visitData.sponsor = sponsor;
 
-    worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
-    worksheet.getCell(`A${rowIdx}`).value =
-      "D-76, Ground Floor, besides LPS GLOBAL SCHOOL, BI";
-    worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
-    rowIdx++;
+   const newVisit = new visitModel(visitData);
+    
+    console.log(`💾 Saving Consultation - Bill: ${billNumbers.consultationBillNumber || 'None'}`);
+    await newVisit.save();
+    console.log(`✅ Saved visit: ${newVisit._id}`);
 
-    worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
-    worksheet.getCell(`A${rowIdx}`).value =
-      "Phone: 0120-4026100, 9625963298 | Email: immunityclinic0@gmail.com";
-    worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
-    rowIdx++;
+    return res.status(200).json({
+      status: 1,
+      message: "Visit added successfully",
+      visitId: newVisit._id,
+      patientId: patient._id,
+      billNumbers: billNumbers, // ✅ ADD THIS LINE
+    });
+  } catch (err) {
+    return res.status(500).json({
+      status: 0,
+      message: "Error adding visit",
+      error: err.message,
+    });
+  }
+};
 
-    worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
-    worksheet.getCell(`A${rowIdx}`).value =
-      "Reg No: 64793/2020 | GSTIN: 09AAJFI9867J1ZH";
-    worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
-    rowIdx++;
 
-    worksheet.addRow([]);
-    rowIdx++;
+const getVisitsByPatientId = async (req, res) => {
+  try {
+    const { idno } = req.params;
 
-    // -------------------- Invoice & Patient Info --------------------
-    const invoiceRow = worksheet.addRow([
-      "Invoice No:",
-      invoiceNumber,
-      "",
-      "",
-      "Sale Date:",
-      sale.saleDate,
+    // Step 1: Find patient
+    const patient = await patientModel.findById(idno);
+
+    if (!patient) {
+      return res.status(404).json({
+        status: 0,
+        message: "Patient not found with provided ID",
+      });
+    }
+
+    // Step 2: Fetch all visits for that patient
+    const visits = await visitModel
+      .find({ patientId: patient._id })
+      .sort({ date: -1 });
+
+    return res.status(200).json({
+      status: 1,
+      message: "Visits fetched successfully",
+      data: visits,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      status: 0,
+      message: "Error fetching visits",
+      error: err.message,
+    });
+  }
+};
+
+const getLastVisit = async (req, res) => {
+  try {
+    const { idno } = req.params;
+
+    if (!idno) {
+      return res.status(400).json({
+        status: 0,
+        message: "Patient ID (idno) is required",
+      });
+    }
+
+    // Find patient by idno
+    const patient = await patientModel.findById(idno);
+
+    if (!patient) {
+      return res.status(404).json({
+        status: 0,
+        message: "Patient not found",
+      });
+    }
+
+    // Find last visit using createdAt timestamp
+    const lastVisit = await visitModel
+      .findOne({ patientId: patient._id })
+      .sort({ createdAt: -1 });
+
+    if (!lastVisit) {
+      return res.status(404).json({
+        status: 0,
+        message: "No visits found for this patient",
+      });
+    }
+
+    res.status(200).json({
+      status: 1,
+      message: "Last visit fetched successfully",
+      lastVisit,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 0,
+      message: "Error fetching last visit",
+      error: error.message,
+    });
+  }
+};
+
+const patientList = async (req, res) => {
+  const enquiry = await patientModel.find();
+  res.send({ status: 1, enquiryList: enquiry });
+};
+
+// OPTIMIZED VERSION - Replace the existing exportPatientMaster function
+
+const exportPatientMaster = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    
+    // Parse dates once
+    const fromDate = new Date(dateFrom);
+    const toDate = new Date(dateTo);
+    toDate.setHours(23, 59, 59, 999);
+
+    // Helper function to parse DD/MM/YYYY
+    const parseDDMMYYYY = (str) => {
+      const [day, month, year] = str.split("/").map(Number);
+      return new Date(year, month - 1, day);
+    };
+
+    // 🔥 OPTIMIZATION 1: Single aggregation query instead of N+1 queries
+    const patientsWithVisits = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false, // Only patients with visits
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          gender: 1,
+          age: 1,
+          houseno: 1,
+          city: 1,
+          district: 1,
+          state: 1,
+          pin: 1,
+          aadharnum: 1,
+          phone: 1,
+          email: 1,
+          visitDate: "$visits.date",
+        },
+      },
     ]);
-    invoiceRow.getCell(1).alignment = { horizontal: "left" };
-    invoiceRow.getCell(2).alignment = { horizontal: "left" };
-    invoiceRow.getCell(5).alignment = { horizontal: "left" };
-    invoiceRow.getCell(6).alignment = { horizontal: "left" };
-    rowIdx++;
 
-    worksheet.addRow([
-      "Patient ID:",
-      sale.patientId,
-      "",
-      "",
-      "Patient Name:",
-      sale.patientName,
-    ]);
-    rowIdx++;
+    // 🔥 OPTIMIZATION 2: Filter in memory (faster than DB for date strings)
+    const filteredData = patientsWithVisits.filter((record) => {
+      if (!record.visitDate) return false;
+      const visitDate = parseDDMMYYYY(record.visitDate);
+      return visitDate >= fromDate && visitDate <= toDate;
+    });
 
-    worksheet.addRow([]);
-    rowIdx++;
+    // 🔥 OPTIMIZATION 3: Remove duplicates efficiently using Set
+    const uniqueRecords = new Map();
+    filteredData.forEach((record) => {
+      const key = `${record._id}_${record.visitDate}`;
+      if (!uniqueRecords.has(key)) {
+        uniqueRecords.set(key, record);
+      }
+    });
 
-    // -------------------- Medicine Table Header --------------------
-    const headerRow = worksheet.addRow([
-      "S.No",
-      "Medicine Name",
-      "Batch",
-      "HSN",
-      "Expiry",
-      "Price/Unit",
-      "Qty",
-      "Total",
-    ]);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Patient Master");
 
+    worksheet.columns = [
+      { header: "ID No.", key: "idno", width: 20 },
+      { header: "Name", key: "name", width: 25 },
+      { header: "Sex", key: "gender", width: 10 },
+      { header: "Age", key: "age", width: 10 },
+      { header: "House No", key: "houseno", width: 25 },
+      { header: "City", key: "city", width: 15 },
+      { header: "District", key: "district", width: 20 },
+      { header: "State", key: "state", width: 15 },
+      { header: "Pin", key: "pin", width: 10 },
+      { header: "Aadhar number", key: "aadharnum", width: 20 },
+      { header: "Mobile", key: "phone", width: 20 },
+      { header: "Email", key: "email", width: 25 },
+      { header: "Date", key: "visitDate", width: 20 },
+    ];
+
+    // Style header
+    const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.font = { bold: true, color: { argb: "FF000000" }, size: 12 };
       cell.fill = {
         type: "pattern",
         pattern: "solid",
-        fgColor: { argb: "FFFF8800" },
+        fgColor: { argb: "FFFFD700" },
       };
-      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.alignment = { vertical: "middle", horizontal: "left" };
       cell.border = {
         top: { style: "thin" },
         left: { style: "thin" },
@@ -1210,1923 +1344,2836 @@ const addMedicineToSale = () => {
         right: { style: "thin" },
       };
     });
-    rowIdx++;
 
-    // -------------------- Medicine Data --------------------
-    sale.medicines.forEach((med, index) => {
-      const row = worksheet.addRow([
-        index + 1,
-        med.medicineName,
-        med.batch,
-        med.hsn,
-        med.expiry,
-        med.pricePerUnit,
-        med.quantity,
-        med.totalPrice,
-      ]);
-      row.eachCell((cell) => {
-        cell.alignment = { horizontal: "center" };
+    // 🔥 OPTIMIZATION 4: Batch add rows (much faster)
+    const rows = Array.from(uniqueRecords.values()).map((record) => ({
+      idno: record.idno || "",
+      name: `${record.firstName?.trim() || ""} ${record.lastName?.trim() || ""}`.trim(),
+      gender: record.gender || "",
+      age: record.age || "",
+      houseno: record.houseno || "",
+      city: record.city || "",
+      district: record.district || "",
+      state: record.state || "",
+      pin: record.pin || "",
+      aadharnum: record.aadharnum?.toString().padStart(12, "0") || "",
+      phone: record.phone || "",
+      email: record.email || "",
+      visitDate: record.visitDate,
+    }));
+
+    worksheet.addRows(rows);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=PatientMaster.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error exporting patient master:", error.message);
+    res.status(500).json({ 
+      message: "Failed to export Excel", 
+      error: error.message 
+    });
+  }
+};
+// OPTIMIZED VERSION - Replace exportPatientBillingMaster function
+
+const exportPatientBillingMaster = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    const fromDate = new Date(dateFrom);
+    const toDate = new Date(dateTo);
+    toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
+
+    const parseDDMMYYYY = (str) => {
+      const [day, month, year] = str.split("/").map(Number);
+      return new Date(year, month - 1, day);
+    };
+
+    // 🔥 OPTIMIZATION: Single aggregation with all data
+    const billingData = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          visitDate: "$visits.date",
+          consultationamount: "$visits.consultationamount",
+          prakritiparikshanamount: "$visits.prakritiparikshanamount",
+          therapyWithAmount: "$visits.therapyWithAmount",
+          sponsor: "$visits.sponsor",
+        },
+      },
+    ]);
+
+    // Filter by date
+    const filteredData = billingData.filter((record) => {
+      if (!record.visitDate) return false;
+      const visitDate = parseDDMMYYYY(record.visitDate);
+      visitDate.setHours(0, 0, 0, 0);
+      return (
+        visitDate.getTime() >= fromDate.getTime() &&
+        visitDate.getTime() <= toDate.getTime()
+      );
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Patient Summary");
+
+    worksheet.columns = [
+      { header: "ID No.", key: "idno", width: 15 },
+      { header: "Name", key: "name", width: 25 },
+      { header: "Age", key: "age", width: 10 },
+      { header: "Sex", key: "gender", width: 10 },
+      { header: "Mobile", key: "phone", width: 15 },
+      { header: "Aadhar No.", key: "aadharnum", width: 20 },
+      { header: "Consultation Amount", key: "consultationamount", width: 20 },
+      { header: "Prakriti Parikshan Amount", key: "prakritiparikshanamount", width: 25 },
+      { header: "Therapy Amount", key: "therapyamount", width: 18 },
+      { header: "Total Amount", key: "totalamount", width: 18 },
+      { header: "Therapy Name", key: "therapyname", width: 40 },
+      { header: "Date", key: "date", width: 15 },
+      { header: "Sponsor", key: "sponsor", width: 20 },
+    ];
+
+    // Style header
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FF000000" }, size: 12 };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFFFD700" },
+      };
+      cell.alignment = { vertical: "middle", horizontal: "left" };
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    // Prepare rows
+    const rows = filteredData.map((record) => {
+      const consultation = Number(record.consultationamount) || 0;
+      const prakriti = Number(record.prakritiparikshanamount) || 0;
+
+      const therapyWithAmountArray = Array.isArray(record.therapyWithAmount)
+        ? record.therapyWithAmount
+        : [];
+
+      const therapy = therapyWithAmountArray.reduce(
+        (sum, t) => sum + (Number(t.receivedAmount) || 0),
+        0
+      );
+
+      const therapyNames = therapyWithAmountArray
+        .map((t) => t.name)
+        .join(", ");
+
+      const total = consultation + prakriti + therapy;
+
+      return {
+        idno: record.idno || "",
+        name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+        age: record.age || "",
+        gender: record.gender || "",
+        phone: record.phone || "",
+        aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
+        consultationamount: consultation,
+        prakritiparikshanamount: prakriti,
+        therapyamount: therapy,
+        totalamount: total,
+        therapyname: therapyNames,
+        date: record.billDate || record.visitDate,
+        sponsor: record.sponsor || "",
+      };
+    });
+
+    worksheet.addRows(rows);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=PatientSummary.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error exporting patient Summary:", error.message);
+    res.status(500).json({
+      message: "Failed to export Excel",
+      error: error.message,
+    });
+  }
+};
+
+const exportPatientBillingById = async (req, res) => {
+  try {
+    const { patientId, dateFrom, dateTo } = req.query;
+
+    if (!patientId) {
+      return res.status(400).json({ message: "Patient ID is required" });
+    }
+
+    const fromDate = new Date(dateFrom);
+    const toDate = new Date(dateTo);
+    toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
+
+    const parseDDMMYYYY = (str) => {
+      const [day, month, year] = str.split("/").map(Number);
+      return new Date(year, month - 1, day);
+    };
+
+    const selectedPatient = await patientModel.findOne({ idno: patientId });
+
+    if (!selectedPatient) {
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
+    const visits = await visitModel
+      .find({ patientId: selectedPatient._id })
+      .sort({ date: -1 });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Patient Report");
+
+    worksheet.columns = [
+      { header: "Date", key: "date", width: 15 },
+      { header: "Consultation Amount", key: "consultationamount", width: 20 },
+      {
+        header: "Prakriti Parikshan Amount",
+        key: "prakritiparikshanamount",
+        width: 25,
+      },
+      { header: "Therapy Amount", key: "therapyamount", width: 18 },
+      { header: "Total Amount", key: "totalamount", width: 18 },
+      { header: "Therapy Name", key: "therapyname", width: 40 },
+      { header: "Sponsor", key: "sponsor", width: 20 },
+    ];
+
+    // Style header
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, size: 12, color: { argb: "FF000000" } };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFFFD700" },
+      };
+      cell.alignment = { vertical: "middle", horizontal: "left" };
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    // Loop over visits
+    visits.forEach((visit) => {
+      if (!visit.date) return;
+
+      const visitDate = parseDDMMYYYY(visit.date);
+      visitDate.setHours(0, 0, 0, 0);
+
+      if (
+        visitDate.getTime() >= fromDate.getTime() &&
+        visitDate.getTime() <= toDate.getTime()
+      ) {
+        const consultation = Number(visit.consultationamount) || 0;
+        const prakriti = Number(visit.prakritiparikshanamount) || 0;
+
+        const therapyWithAmountArray = Array.isArray(visit.therapyWithAmount)
+          ? visit.therapyWithAmount
+          : [];
+
+        const therapyAmount = therapyWithAmountArray.reduce(
+          (sum, t) => sum + Number(t.receivedAmount || 0),
+          0
+        );
+
+        const therapyNames = therapyWithAmountArray
+          .map((t) => t.name)
+          .join(", ");
+
+        const total = consultation + prakriti + therapyAmount;
+
+        const addedRow = worksheet.addRow({
+          date: visit.date,
+          consultationamount: consultation,
+          prakritiparikshanamount: prakriti,
+          therapyamount: therapyAmount,
+          totalamount: total,
+          therapyname: therapyNames,
+          sponsor: visit.sponsor || "",
+        });
+
+        addedRow.eachCell((cell) => {
+          cell.alignment = { horizontal: "left" };
+        });
+      }
+    });
+
+    // Set response headers
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  `attachment; filename=PatientBilling_${patientId}.xlsx`
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error exporting patient billing by ID:", error.message);
+    res.status(500).json({
+      message: "Failed to export Excel",
+      error: error.message,
+    });
+  }
+};
+
+const getLastPatient = async (req, res) => {
+  try {
+    const latestPatient = await patientModel.findOne().sort({ _id: -1 });
+    if (!latestPatient) {
+      return res.status(404).json({ status: 0, message: "No patient found" });
+    }
+    return res.status(200).json({ status: 1, patient: latestPatient });
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ status: 0, message: "Server error", error: err.message });
+  }
+};
+
+const exportRevenueReport = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+
+    if (!dateFrom || !dateTo) {
+      return res
+        .status(400)
+        .json({ message: "Missing dateFrom or dateTo in query params" });
+    }
+
+    // Parse any date in LOCAL time. new Date("YYYY-MM-DD") = UTC = wrong in IST.
+    const parseDDMMYYYY = (str) => {
+      if (!str) return null;
+      if (str.includes("/")) {
+        const [day, month, year] = str.split("/").map(Number);
+        if (!day || !month || !year) return null;
+        return new Date(year, month - 1, day);
+      }
+      if (str.includes("-")) {
+        const [year, month, day] = str.split("-").map(Number);
+        if (!day || !month || !year) return null;
+        return new Date(year, month - 1, day);
+      }
+      return null;
+    };
+
+    const fromDate = parseDDMMYYYY(dateFrom);
+    const toDate = parseDDMMYYYY(dateTo);
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+    fromDate.setHours(0, 0, 0, 0);
+    toDate.setHours(23, 59, 59, 999);
+
+    // ----------------- 1. Fetch ALL visits at once (OPTIMIZED) -----------------
+    const allVisits = await visitModel.find().lean(); // ✅ Single query with lean()
+
+    let consultationSum = 0;
+    let therapySum = 0;
+    let otherServicesSum = 0;
+    let consultationCount = 0;
+    let therapyCount = 0;
+    let prakritiCount = 0;
+
+    // ✅ Process all visits in a single loop
+    allVisits.forEach((visit) => {
+      try {
+        const discountList = visit.discounts?.therapies || [];
+        const therapiesList = visit.therapies || [];
+        const twaList = visit.therapyWithAmount || [];
+
+        const resolveTherapyAmount = (tName) => {
+          const cleanName = tName.trim().toLowerCase();
+          const discountEntry = discountList.find(d => d.name?.trim().toLowerCase() === cleanName);
+          const discountPct = discountEntry ? Number(discountEntry.percentage) || 0 : 0;
+          const applyDiscount = (base) => discountPct > 0 ? Math.round(base * (1 - discountPct / 100)) : base;
+          const exact = twaList.find(t => t.name?.trim().toLowerCase() === cleanName && Number(t.receivedAmount) > 0);
+          if (exact) return applyDiscount(Number(exact.receivedAmount));
+          const sw = twaList.find(t => t.name?.trim().toLowerCase().startsWith(cleanName) && Number(t.receivedAmount) > 0);
+          if (sw) return applyDiscount(Number(sw.receivedAmount));
+          const ct = twaList.find(t => t.name?.trim().toLowerCase().includes(cleanName) && Number(t.receivedAmount) > 0);
+          if (ct) return applyDiscount(Number(ct.receivedAmount));
+          const ft = therapiesList.find(t => t.name?.trim().toLowerCase() === cleanName);
+          if (ft && Number(ft.amount) > 0) return applyDiscount(Number(ft.amount));
+          return 0;
+        };
+
+        // PATH A — Modern visits: filter each bill by its OWN billDate.
+        // Runs OUTSIDE the visitDate gate — bill date and visit date can differ.
+        if (Array.isArray(visit.therapyBills) && visit.therapyBills.length > 0) {
+          visit.therapyBills.forEach((bill) => {
+            const billTherapies = (bill.therapies || []).filter(t => t && t.trim() !== "");
+            if (billTherapies.length === 0) return;
+            const billDateStr = bill.billDate || visit.date;
+            if (!billDateStr) return;
+            const billDate = parseDDMMYYYY(billDateStr);
+            if (!billDate || isNaN(billDate.getTime())) return;
+            billDate.setHours(0, 0, 0, 0);
+            if (billDate < fromDate || billDate > toDate) return;
+            therapySum += billTherapies.reduce((sum, tName) => sum + resolveTherapyAmount(tName), 0);
+            therapyCount++; // count ALL bills including ₹0 — matches therapy report
+          });
+        }
+
+        // Consultation, Prakriti, PATH B all use visit.date
+        if (!visit.date) return;
+        const visitDate = parseDDMMYYYY(visit.date);
+        if (!visitDate || isNaN(visitDate.getTime())) return;
+        visitDate.setHours(0, 0, 0, 0);
+        if (visitDate < fromDate || visitDate > toDate) return;
+
+        const consultationAmount = Number(visit.consultationamount || 0);
+        if (consultationAmount > 0) { consultationSum += consultationAmount; consultationCount++; }
+
+        const prakritiAmount = Number(visit.prakritiparikshanamount || 0);
+        if (prakritiAmount > 0) { otherServicesSum += prakritiAmount; prakritiCount++; }
+
+        // PATH B — Old visits (no therapyBills[]): amounts in therapyWithAmount[].receivedAmount
+        if (!Array.isArray(visit.therapyBills) || visit.therapyBills.length === 0) {
+          twaList.forEach((t) => {
+            if (t.name && t.name.trim() !== "") {
+              therapySum += Number(t.receivedAmount || 0);
+              therapyCount++;
+            }
+          });
+        }
+      } catch (err) {
+        console.error(`Error processing visit ${visit._id}:`, err.message);
+      }
+    });
+
+    // ----------------- 2. Fetch medicine sales -----------------
+    const sales = await saleModel.find().lean();
+
+    const filteredSales = sales.filter((sale) => {
+      if (!sale.saleDate) return false;
+      const saleDate = new Date(sale.saleDate);
+      return !isNaN(saleDate.getTime()) && saleDate >= fromDate && saleDate <= toDate;
+    });
+
+    // ✅ Round medicine sales - sum accurate amounts first, then round
+    const medicineSum = filteredSales.reduce(
+      (sum, sale) => sum + Number(sale.totalAmount || 0),
+      0
+    );
+    const medicineCount = filteredSales.length;
+
+    // ✅ Calculate totals with accurate data, round only for display
+    const totalRevenue = consultationSum + therapySum + otherServicesSum + medicineSum;
+
+    // Round all values for display
+    const displayValues = {
+      consultationSum: Math.round(consultationSum),
+      therapySum: Math.round(therapySum),
+      otherServicesSum: Math.round(otherServicesSum),
+      medicineSum: Math.round(medicineSum),
+      totalRevenue: Math.round(totalRevenue)
+    };
+
+    // ----------------- 3. Generate Excel -----------------
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Revenue Report");
+
+    worksheet.getColumn(1).width = 10;
+    worksheet.getColumn(2).width = 35;
+    worksheet.getColumn(3).width = 20;
+    worksheet.getColumn(4).width = 20;
+
+    // Title row
+    worksheet.mergeCells("B1:D1");
+    const titleCell = worksheet.getCell("B1");
+    titleCell.value = `Revenue Report (${dateFrom} to ${dateTo})`;
+    titleCell.font = { bold: true, size: 14, underline: true };
+    titleCell.alignment = { horizontal: "center", vertical: "middle" };
+
+    // Add header row
+    const headerRow = worksheet.addRow(["S.NO", "Source of Income", "No. Of Count", "Amount (₹)"]);
+    
+    // Add data rows - ✅ Use rounded display values
+    worksheet.addRow(["1", "Consultation Fees", consultationCount, displayValues.consultationSum]);
+    worksheet.addRow(["2", "Medicine Sales", medicineCount, displayValues.medicineSum]);
+    worksheet.addRow(["3", "Panchakarma Treatments", therapyCount, displayValues.therapySum]);
+    worksheet.addRow(["4", "Prakriti Parikshans", prakritiCount, displayValues.otherServicesSum]);
+    worksheet.addRow(["", "Total Revenue", "", displayValues.totalRevenue]);
+
+    // Style header row
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFCCE5FF" } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = {
+        top: { style: "thin" },
+        bottom: { style: "thin" },
+        left: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    // Add borders to all data rows
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber > 2) {
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
+          if (cell.col === 3 || cell.col === 4) {
+            cell.alignment = { horizontal: "center" };
+          }
+        });
+      }
+    });
+
+    // Bold the total row
+    const totalRow = worksheet.lastRow;
+    totalRow.eachCell((cell) => {
+      cell.font = { bold: true };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=RevenueReport.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error exporting revenue report:", error);
+    res
+      .status(500)
+      .json({ message: "Failed to export Excel", error: error.message });
+  }
+};
+
+const exportMedicineStock = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    
+    // Get all medicines with current stock
+    const medicines = await medicineModel.find();
+    
+    if (dateFrom && dateTo) {
+      // Use the END date (dateTo) to calculate stock as of that date
+      const selectedDate = new Date(dateTo);
+      selectedDate.setHours(23, 59, 59, 999);
+      
+      // Get ALL purchases and sales
+      const allPurchases = await PurchaseModel.find({});
+      const allSales = await saleModel.find({});
+      
+      // Parse sale date helper
+      const parseSaleDate = (dateStr) => {
+        if (!dateStr) return null;
+        if (dateStr.includes('/')) {
+          const [day, month, year] = dateStr.split('/').map(Number);
+          return new Date(year, month - 1, day);
+        }
+        return new Date(dateStr);
+      };
+      
+      // Calculate quantities AFTER the selected date
+      const purchaseAfter = {};
+      const soldAfter = {};
+      
+      // Process ALL purchases that happened AFTER the selected date
+      allPurchases.forEach(p => {
+        const purchaseDate = new Date(p.billingDate);
+        purchaseDate.setHours(0, 0, 0, 0);
+        
+        if (purchaseDate > selectedDate && p.medicines) {
+          p.medicines.forEach(m => {
+            const medicineName = m.name;
+            const qty = m.quantity || 0;
+            purchaseAfter[medicineName] = (purchaseAfter[medicineName] || 0) + qty;
+          });
+        }
+      });
+      
+      // Process ALL sales that happened AFTER the selected date
+      allSales.forEach(s => {
+        const saleDate = parseSaleDate(s.saleDate);
+        if (saleDate) {
+          saleDate.setHours(0, 0, 0, 0);
+          
+          if (saleDate > selectedDate && s.medicines) {
+            s.medicines.forEach(m => {
+              const medicineName = m.medicineName;
+              const qty = m.quantity || 0;
+              soldAfter[medicineName] = (soldAfter[medicineName] || 0) + qty;
+            });
+          }
+        }
+      });
+      
+      // Calculate stock as it was on the selected date
+      medicines.forEach(med => {
+        const name = med['Product Name'];
+        const currentStock = med.Quantity || 0;
+        
+        // Formula: Stock on Selected Date = Current Stock + All Purchases After - All Sales After
+        const purchasedAfterDate = purchaseAfter[name] || 0;
+        const soldAfterDate = soldAfter[name] || 0;
+        
+        const stockOnDate = currentStock + purchasedAfterDate - soldAfterDate;
+        
+        med._doc.stockAtDate = Math.max(0, stockOnDate);
+      });
+    }
+
+    const sortedList = medicines.sort((a, b) => {
+      const codeA = isNaN(a.Code) ? a.Code.toString() : Number(a.Code);
+      const codeB = isNaN(b.Code) ? b.Code.toString() : Number(b.Code);
+      return codeA > codeB ? 1 : -1;
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Medicine Stock");
+
+    // ✅ ADD TITLE AND DATE HEADERS
+    if (dateFrom && dateTo) {
+      const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
+      
+      // Row 1: Main Title
+      worksheet.mergeCells('A1:F1');
+      const titleCell = worksheet.getCell('A1');
+      titleCell.value = `Stock on  Date`;
+      titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleCell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFD9D9D9" },
+      };
+      
+      // Row 2: Date Info
+      worksheet.mergeCells('A2:F2');
+      const dateCell = worksheet.getCell('A2');
+      dateCell.value = `Report Date: ${displayDate}`;
+      dateCell.font = { bold: true, size: 12 };
+      dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      
+      // Row 3: Empty row for spacing
+      worksheet.addRow([]);
+      
+      // Row 4: Column Headers
+      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date"]);
+      
+      // Style the column header row (row 4)
+      const headerRow = worksheet.getRow(4);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, size: 11 };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF00" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
         cell.border = {
           top: { style: "thin" },
-          left: { style: "thin" },
           bottom: { style: "thin" },
+          left: { style: "thin" },
           right: { style: "thin" },
         };
       });
-      rowIdx++;
+      
+      // Set column widths
+      worksheet.getColumn(1).width = 10;  // Code
+      worksheet.getColumn(2).width = 40;  // Product Name
+      worksheet.getColumn(3).width = 10;  // Unit
+      worksheet.getColumn(4).width = 20;  // Company
+      worksheet.getColumn(5).width = 15;  // Current Stock
+      worksheet.getColumn(6).width = 20;  // Stock on Selected Date
+      
+    } else {
+      // Without dates - simple header
+      worksheet.columns = [
+        { header: "Code", key: "code", width: 10 },
+        { header: "Product Name", key: "name", width: 40 },
+        { header: "Unit", key: "unit", width: 10 },
+        { header: "Company", key: "company", width: 20 },
+        { header: "Quantity", key: "quantity", width: 15 }
+      ];
+      
+      const headerRow = worksheet.getRow(1);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF00" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
+    }
+
+    // Add data rows
+    sortedList.forEach((item) => {
+      const rowData = dateFrom && dateTo
+        ? [
+            item.Code,
+            item["Product Name"],
+            item.Unit,
+            item.Company,
+            item.Quantity, // Current stock (today)
+            item._doc?.stockAtDate ?? item.Quantity // Stock on selected date
+          ]
+        : [
+            item.Code,
+            item["Product Name"],
+            item.Unit,
+            item.Company,
+            item.Quantity
+          ];
+      
+      const row = worksheet.addRow(rowData);
+      row.eachCell((cell) => {
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
     });
 
-    worksheet.addRow([]);
-    rowIdx++;
+    const buffer = await workbook.xlsx.writeBuffer();
 
-    // -------------------- Totals --------------------
-    const addTotalRow = (label, value) => {
-      const row = worksheet.addRow(["", "", "", "", "", label, "", value]);
-      row.eachCell((cell, colNumber) => {
-        if (colNumber >= 6) {
-          cell.font = { bold: true };
-          cell.alignment = { horizontal: "center" };
-          cell.border = {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" },
-          };
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=MedicineStockReport.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error generating medicine stock report:", error.message);
+    res.status(500).json({
+      message: "Failed to export medicine stock",
+      error: error.message,
+    });
+  }
+};
+
+const exportLowStock = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    const MIN_STOCK = 10;
+    
+    // Get all medicines
+    const medicines = await medicineModel.find();
+    
+    // If dates provided, calculate stock as it was on that date
+    if (dateFrom && dateTo) {
+      // Use the END date to calculate stock
+      const selectedDate = new Date(dateTo);
+      selectedDate.setHours(23, 59, 59, 999);
+      
+      const allPurchases = await PurchaseModel.find({});
+      const allSales = await saleModel.find({});
+      
+      const purchaseAfter = {};
+      const soldAfter = {};
+      
+      // Parse sale date helper
+      const parseSaleDate = (dateStr) => {
+        if (!dateStr) return null;
+        if (dateStr.includes('/')) {
+          const [day, month, year] = dateStr.split('/').map(Number);
+          return new Date(year, month - 1, day);
+        }
+        return new Date(dateStr);
+      };
+      
+      // Process purchases AFTER selected date
+      allPurchases.forEach(p => {
+        const purchaseDate = new Date(p.billingDate);
+        purchaseDate.setHours(0, 0, 0, 0);
+        
+        if (purchaseDate > selectedDate && p.medicines) {
+          p.medicines.forEach(m => {
+            const medicineName = m.name;
+            const qty = m.quantity || 0;
+            purchaseAfter[medicineName] = (purchaseAfter[medicineName] || 0) + qty;
+          });
         }
       });
-      rowIdx++;
-    };
+      
+      // Process sales AFTER selected date
+      allSales.forEach(s => {
+        const saleDate = parseSaleDate(s.saleDate);
+        if (saleDate) {
+          saleDate.setHours(0, 0, 0, 0);
+          
+          if (saleDate > selectedDate && s.medicines) {
+            s.medicines.forEach(m => {
+              const medicineName = m.medicineName;
+              const qty = m.quantity || 0;
+              soldAfter[medicineName] = (soldAfter[medicineName] || 0) + qty;
+            });
+          }
+        }
+      });
+      
+      // Calculate stock on selected date
+      medicines.forEach(med => {
+        const name = med['Product Name'];
+        const currentStock = med.Quantity || 0;
+        
+        const purchasedAfterDate = purchaseAfter[name] || 0;
+        const soldAfterDate = soldAfter[name] || 0;
+        
+        const stockOnDate = currentStock + purchasedAfterDate - soldAfterDate;
+        
+        med._doc.stockAtDate = Math.max(0, stockOnDate);
+      });
+    }
 
-    addTotalRow("Subtotal (₹):", sale.subtotal.toFixed(2));
+    // Filter for low stock based on calculated stock at date
+    const filteredSortedList = medicines
+      .filter((item) => {
+        const stockToCheck = dateFrom && dateTo 
+          ? (item._doc?.stockAtDate ?? item.Quantity)
+          : item.Quantity;
+        return Number(stockToCheck) <= MIN_STOCK;
+      })
+      .sort((a, b) => {
+        const codeA = isNaN(a.Code) ? a.Code.toString() : Number(a.Code);
+        const codeB = isNaN(b.Code) ? b.Code.toString() : Number(b.Code);
+        return codeA > codeB ? 1 : -1;
+      });
 
-const discountPercent = parseFloat(sale?.discount) || 0;
-const discountAmount = (sale.subtotal * discountPercent) / 100;
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Low Stock Alert");
 
-if (discountPercent > 0) {
-  addTotalRow(`Discount ${discountPercent}%:`, `- ₹${discountAmount.toFixed(2)}`);
-}
+    // ✅ MATCH RUNNING STOCK REPORT STRUCTURE
+    if (dateFrom && dateTo) {
+      const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
+      
+      // Row 1: Main Title
+      worksheet.mergeCells('A1:F1');
+      const titleCell = worksheet.getCell('A1');
+      titleCell.value = `Low Stock Alert`;
+      titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleCell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFD9D9D9" },
+      };
+      
+      // Row 2: Date Info
+      worksheet.mergeCells('A2:F2');
+      const dateCell = worksheet.getCell('A2');
+      dateCell.value = `Report Date: ${displayDate}`;
+      dateCell.font = { bold: true, size: 12 };
+      dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      
+      // Row 3: Empty row for spacing
+      worksheet.addRow([]);
+      
+      // Row 4: Column Headers (EXACTLY matching running stock report)
+      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date"]);
+      
+      // Style the column header row (row 4)
+      const headerRow = worksheet.getRow(4);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, size: 11 };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF00" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
+      
+      // Set column widths (EXACTLY matching running stock report)
+      worksheet.getColumn(1).width = 10;  // Code
+      worksheet.getColumn(2).width = 40;  // Product Name
+      worksheet.getColumn(3).width = 10;  // Unit
+      worksheet.getColumn(4).width = 20;  // Company
+      worksheet.getColumn(5).width = 15;  // Current Stock
+      worksheet.getColumn(6).width = 20;  // Stock on Selected Date
+      
+    } else {
+      // Without dates - simple header
+      worksheet.columns = [
+        { header: "Code", key: "code", width: 10 },
+        { header: "Product Name", key: "name", width: 40 },
+        { header: "Unit", key: "unit", width: 10 },
+        { header: "Company", key: "company", width: 20 },
+        { header: "Quantity", key: "quantity", width: 15 }
+      ];
+      
+      const headerRow = worksheet.getRow(1);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFF00" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
+    }
 
-const afterDiscount = sale.subtotal - discountAmount;
-const sgst = sale.subtotal * 0.025;
-const cgst = sale.subtotal * 0.025;
+    // Add data rows
+    filteredSortedList.forEach((item) => {
+      const rowData = dateFrom && dateTo
+        ? [
+            item.Code,
+            item["Product Name"],
+            item.Unit,
+            item.Company,
+            item.Quantity, // Current stock (today)
+            item._doc?.stockAtDate ?? item.Quantity // Stock on selected date
+          ]
+        : [
+            item.Code,
+            item["Product Name"],
+            item.Unit,
+            item.Company,
+            item.Quantity
+          ];
+      
+      const row = worksheet.addRow(rowData);
+      row.eachCell((cell) => {
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          bottom: { style: "thin" },
+          left: { style: "thin" },
+          right: { style: "thin" },
+        };
+      });
+    });
 
-addTotalRow("SGST 2.5%:", `₹${sgst.toFixed(2)}`);
-addTotalRow("CGST 2.5%:", `₹${cgst.toFixed(2)}`);
+    const buffer = await workbook.xlsx.writeBuffer();
 
-const roundoff = Math.round(afterDiscount) - afterDiscount;
-addTotalRow("Roundoff:", `₹${roundoff.toFixed(2)}`);
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=LowStockAlert.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
 
-addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
-
-    // -------------------- Social Media Links (Bottom Left) --------------------
-    rowIdx += 2; // Add spacing
-    
-    const socialHeaderRow = worksheet.addRow(["Also Follow Us On:"]);
-    socialHeaderRow.getCell(1).font = { bold: true, size: 11 };
-    socialHeaderRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
-    rowIdx++;
-
-    const instaRow = worksheet.addRow(["Instagram: https://www.instagram.com/clinicimmunity?igsh=YnhobzRyNTEwOXV5"]);
-    instaRow.getCell(1).font = { size: 10, color: { argb: "FF000000" }, underline:false };
-    instaRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
-    rowIdx++;
-
-    const fbRow = worksheet.addRow(["Facebook: https://www.facebook.com/share/p/1Fjjh1KvJi/"]);
-    fbRow.getCell(1).font = { size: 10, color: { argb: "FF000000" }, underline:false };
-    fbRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
-    rowIdx++;
-
-    return rowIdx;
-  };
-
-  // -------------------- Generate First Bill --------------------
-  let currentRow = generateBill(1);
-
-  // -------------------- Add Separator --------------------
-  currentRow += 2; // Add spacing
-  worksheet.addRow([]);
-  currentRow++;
-  
-  // Add dashed line separator
-  worksheet.mergeCells(`A${currentRow}:G${currentRow}`);
-  const separatorCell = worksheet.getCell(`A${currentRow}`);
-  separatorCell.value = "✂️ ------------------------------------------------- CUT HERE ------------------------------------------------- ✂️";
-  separatorCell.alignment = { horizontal: "center" };
-  separatorCell.font = { bold: true, size: 10 };
-  currentRow++;
-  
-  worksheet.addRow([]);
-  currentRow += 2;
-
-  // -------------------- Generate Second Bill (Duplicate) --------------------
-  generateBill(currentRow);
-
-  // -------------------- Set Column Widths --------------------
-  worksheet.columns = [
-    { key: "sno", width: 10 },
-    { key: "medicineName", width: 30 },
-    { key: "batch", width: 12 },
-    { key: "hsn", width: 10 },
-    { key: "expiry", width: 15 },
-    { key: "pricePerUnit", width: 15 },
-    { key: "quantity", width: 6 },
-    { key: "total", width: 12 },
-  ];
-
-  // -------------------- Export File --------------------
-  const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
-  saveAs(blob, `Sale_Invoice_${invoiceNumber}.xlsx`);
+res.send(buffer);
+  } catch (error) {
+    console.error("Error generating low stock report:", error.message);
+    res.status(500).json({
+      message: "Failed to export low stock",
+      error: error.message,
+    });
+  }
 };
 
-const handleRecordSale = async () => {
-  if (
-    newSale.patientId &&
-    newSale.patientName &&
-    newSale.medicines.length > 0
-  ) {
-    const { subtotal, sgst, cgst, totalAmount } = calculateSaleTotal();
+// OPTIMIZED VERSION - Replace exportPrakritiParikshanPatients function
 
-    const sale = {
-      patientId: newSale.patientId,
-      patientName: newSale.patientName,
-      medicines: newSale.medicines,
-      subtotal,
-      sgst,
-      cgst,
-      totalAmount,
-      saleDate: newSale.saleDate,
-      discount: newSale.discount,
-      discountApprovedBy: newSale.discountApprovedBy,
+const exportPrakritiParikshanPatients = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    const fromDate = new Date(dateFrom);
+    const toDate = new Date(dateTo);
+    toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
+
+    const parseDDMMYYYY = (str) => {
+      const [day, month, year] = str.split("/").map(Number);
+      return new Date(year, month - 1, day);
     };
 
-    try {
-      // Send sale to backend
-      const response = await axios.post(
-        `${API_BASE_URL}/api/sale/record`,
-        sale
+    // 🔥 OPTIMIZATION: Single aggregation with filter
+    const prakritiData = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $match: {
+          "visits.prakritiparikshanamount": { $gt: 0 }, // Filter at DB level
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          visitDate: "$visits.date",
+          prakritiparikshanamount: "$visits.prakritiparikshanamount",
+          prakritiBillNumber: "$visits.prakritiBillNumber",
+        },
+      },
+    ]);
+
+    // Filter by date in memory
+    const filteredData = prakritiData.filter((record) => {
+      if (!record.visitDate) return false;
+      const visitDate = parseDDMMYYYY(record.visitDate);
+      visitDate.setHours(0, 0, 0, 0);
+      return (
+        visitDate.getTime() >= fromDate.getTime() &&
+        visitDate.getTime() <= toDate.getTime()
       );
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Prakriti Patients");
+
+    worksheet.columns = [
+      { header: "ID No.", key: "idno", width: 15 },
+      { header: "Bill No.", key: "billNumber", width: 18 },
+      { header: "Name", key: "name", width: 25 },
+      { header: "Age", key: "age", width: 10 },
+      { header: "Sex", key: "gender", width: 10 },
+      { header: "Mobile", key: "phone", width: 15 },
+      { header: "Aadhar No.", key: "aadharnum", width: 20 },
+      { header: "Prakriti Parikshan Amount", key: "prakritiparikshanamount", width: 30 },
+      { header: "Date", key: "date", width: 15 },
+    ];
+
+    // Style header
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FF000000" }, size: 12 };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFBBFFBB" },
+      };
+      cell.alignment = { vertical: "middle", horizontal: "left" };
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    // Prepare rows
+    const rows = filteredData.map((record) => ({
+      idno: record.idno || "",
+      billNumber: record.prakritiBillNumber || "N/A",
+      name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+      age: record.age || "",
+      gender: record.gender || "",
+      phone: record.phone || "",
+      aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
+      prakritiparikshanamount: Number(record.prakritiparikshanamount),
+      date: record.visitDate,
+    }));
+
+    worksheet.addRows(rows);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=PrakritiParikshanPatients.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error exporting prakriti parikshan patients:", error.message);
+    res.status(500).json({
+      message: "Failed to export Excel",
+      error: error.message,
+    });
+  }
+};
+// OPTIMIZED VERSION - Replace exportConsultationPatients function
+
+const exportConsultationPatients = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    const fromDate = new Date(dateFrom);
+    const toDate = new Date(dateTo);
+    toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
+
+    const parseDDMMYYYY = (str) => {
+      const [day, month, year] = str.split("/").map(Number);
+      return new Date(year, month - 1, day);
+    };
+
+    // 🔥 OPTIMIZATION: Single aggregation with DB-level filtering
+    const consultationData = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $match: {
+          "visits.consultationamount": { $gt: 0 }, // Filter at DB level
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          visitDate: "$visits.date",
+          consultationamount: "$visits.consultationamount",
+          consultationBillNumber: "$visits.consultationBillNumber",
+        },
+      },
+    ]);
+
+    // Filter by date
+    const filteredData = consultationData.filter((record) => {
+      if (!record.visitDate) return false;
+      const visitDate = parseDDMMYYYY(record.visitDate);
+      visitDate.setHours(0, 0, 0, 0);
+      return (
+        visitDate.getTime() >= fromDate.getTime() &&
+        visitDate.getTime() <= toDate.getTime()
+      );
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Consultation Patients");
+
+    worksheet.columns = [
+      { header: "ID No.", key: "idno", width: 15 },
+      { header: "Bill No.", key: "billNumber", width: 18 }, 
+      { header: "Name", key: "name", width: 25 },
+      { header: "Age", key: "age", width: 10 },
+      { header: "Sex", key: "gender", width: 10 },
+      { header: "Mobile", key: "phone", width: 15 },
+      { header: "Aadhar No.", key: "aadharnum", width: 20 },
+      { header: "Consultation Amount", key: "consultationamount", width: 20 },
+      { header: "Date", key: "date", width: 15 },
+    ];
+
+    // Style header
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FF000000" }, size: 12 };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFA6D9F7" },
+      };
+      cell.alignment = { vertical: "middle", horizontal: "center" };
+      cell.border = {
+        top: { style: "thin" },
+        bottom: { style: "thin" },
+        left: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    // Prepare and add rows
+    const rows = filteredData.map((record) => {
+      const row = {
+        idno: record.idno || "",
+        billNumber: record.consultationBillNumber || "N/A",
+        name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+        age: record.age || "",
+        gender: record.gender || "",
+        phone: record.phone || "",
+        aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
+        consultationamount: Number(record.consultationamount),
+        date: record.visitDate,
+      };
+      return row;
+    });
+
+    worksheet.addRows(rows);
+
+    // Center align all cells
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
+        });
+      }
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=ConsultationPatients.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error exporting consultation patients:", error.message);
+    res.status(500).json({
+      message: "Failed to export Excel",
+      error: error.message,
+    });
+  }
+};
+const exportPatientsBySpeciality = async (req, res) => {
+  try {
+    const { dateFrom, dateTo, selectedSpecialty } = req.query;
+
+    console.log("📊 Disease Analysis Report Request:", { dateFrom, dateTo, selectedSpecialty });
+
+    if (!selectedSpecialty || !dateFrom || !dateTo) {
+      return res.status(400).json({
+        message: "Missing selectedSpecialty, dateFrom or dateTo in query params",
+      });
+    }
+
+    // Parse specialties (case-insensitive)
+    const specialties = selectedSpecialty
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(s => s.length > 0);
+
+    if (specialties.length === 0) {
+      return res.status(400).json({
+        message: "No valid specialties provided",
+      });
+    }
+
+    // ✅ FIX: Universal date parser that handles BOTH formats
+    const parseDate = (str) => {
+      if (!str) return null;
       
-      // ✅ FIX: Use backend response which includes billNumber
-      if (response.data && response.data.sale) {
-        // Generate receipt with backend sale data (has billNumber)
-        await generateExcelReceipt(response.data.sale);
-      } else {
-        console.error("Backend response missing sale data:", response.data);
-        alert("Sale recorded but receipt generation failed.");
+      // Handle DD/MM/YYYY format
+      if (str.includes("/")) {
+        const [day, month, year] = str.split("/").map(Number);
+        return new Date(year, month - 1, day);
       }
       
-      // Refresh sales list
-      const updatedSales = await axios.get(
-        `${API_BASE_URL}/api/sale/view`
-      );
-      setSales(updatedSales.data.sales);
+      // Handle YYYY-MM-DD format (from frontend)
+      if (str.includes("-")) {
+        return new Date(str);
+      }
       
-      // Reset form
-      setNewSale({
-        patientId: "",
-        patientName: "",
-        medicines: [],
-        saleDate: new Date().toISOString().split("T")[0],
-        discount: "",
-        discountApprovedBy: "",
+      return null;
+    };
+
+    const fromDate = parseDate(dateFrom);
+    const toDate = parseDate(dateTo);
+    
+    if (!fromDate || !toDate || isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+      return res.status(400).json({
+        message: "Invalid date format. Please use YYYY-MM-DD or DD/MM/YYYY",
       });
-      setIsRecordingSale(false);
-
-      alert("Invoice generated successfully!");
-    } catch (error) {
-      console.error("Error recording sale:", error);
-      alert("Failed to record sale. Please try again.");
     }
-  } else {
-    alert("Please fill patient details and add at least one medicine");
+    
+    toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
+
+    console.log("📅 Parsed Date Range:", { fromDate, toDate });
+    console.log("🥼 Looking for specialties:", specialties);
+
+    // Single aggregation query
+    const results = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          aadharnum: 1,
+          department: "$visits.department",
+          visitDate: "$visits.date",
+        },
+      },
+    ]);
+
+    console.log(`📦 Total records from DB: ${results.length}`);
+
+    // ✅ FIX: Parse visit dates with same universal parser
+    const filteredRows = results.filter((record) => {
+      // Check specialty match (case-insensitive)
+      const visitSpecialty = record.department?.trim().toLowerCase();
+      if (!visitSpecialty) {
+        console.log("⚠️ Record missing department:", record.idno);
+        return false;
+      }
+      
+      if (!specialties.includes(visitSpecialty)) {
+        return false;
+      }
+
+      // Check date range
+      if (!record.visitDate) {
+        console.log("⚠️ Record missing visit date:", record.idno);
+        return false;
+      }
+      
+      try {
+        const visitDate = parseDate(record.visitDate);
+        if (!visitDate || isNaN(visitDate.getTime())) {
+          console.log("⚠️ Invalid visit date format:", record.visitDate);
+          return false;
+        }
+        
+        visitDate.setHours(0, 0, 0, 0);
+        return visitDate >= fromDate && visitDate <= toDate;
+      } catch (e) {
+        console.error("❌ Date parse error:", record.visitDate, e);
+        return false;
+      }
+    });
+
+    console.log(`✅ Filtered records: ${filteredRows.length}`);
+
+    if (filteredRows.length === 0) {
+      return res.status(404).json({
+        message: `No patients found for selected specialties between ${dateFrom} and ${dateTo}.`,
+      });
+    }
+
+    // Generate Excel
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Disease Master Report");
+
+    worksheet.columns = [
+      { header: "ID No.", key: "idno", width: 15 },
+      { header: "Name", key: "name", width: 25 },
+      { header: "Age", key: "age", width: 10 },
+      { header: "Gender", key: "gender", width: 10 },
+      { header: "Mobile", key: "phone", width: 15 },
+      { header: "Aadhar No.", key: "aadharnum", width: 20 },
+      { header: "Department", key: "department", width: 25 },
+      { header: "Date", key: "date", width: 15 },
+    ];
+
+    // Style header
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, size: 12 };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFFFD700" },
+      };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = {
+        top: { style: "thin" },
+        bottom: { style: "thin" },
+        left: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    // Add rows
+    const rows = filteredRows.map((record) => ({
+      idno: record.idno || "",
+      name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+      age: record.age || "",
+      gender: record.gender || "",
+      phone: record.phone || "",
+      aadharnum: record.aadharnum ? record.aadharnum.toString().padStart(12, "0") : "",
+      department: record.department || "",
+      date: record.visitDate || "",
+    }));
+
+    worksheet.addRows(rows);
+
+    // Center align data
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
+        });
+      }
+    });
+
+    console.log("✅ Excel generated successfully");
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  `attachment; filename=Disease_Master_Report_${new Date().toISOString().split("T")[0]}.xlsx`
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("❌ Error exporting disease master report:", error);
+    res.status(500).json({
+      message: "Failed to export Excel",
+      error: error.message,
+    });
   }
 };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-orange-600 mx-auto"></div>
-          <p className="mt-4 text-lg text-gray-600">Loading medicines...</p>
-        </div>
-      </div>
+const exportTherapyReport = async (req, res) => {
+  try {
+    const { dateFrom, dateTo, selectedTherapy } = req.query;
+
+    console.log("💆 Therapy Report Request:", { dateFrom, dateTo, selectedTherapy });
+
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({
+        message: "Missing dateFrom or dateTo in query params",
+      });
+    }
+
+    // Empty / missing selectedTherapy = match ALL bills (no name filter).
+    // This makes totals align with the revenue report exactly — including bills
+    // whose therapy names aren't in the frontend dropdown list.
+    const selectedTherapies = (selectedTherapy || "")
+      .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter((t) => t.length > 0);
+
+    const matchAllTherapies = selectedTherapies.length === 0;
+
+    // Universal date parser: handles DD/MM/YYYY and YYYY-MM-DD
+    const parseDate = (str) => {
+      if (!str) return null;
+      if (str.includes("/")) {
+        const [day, month, year] = str.split("/").map(Number);
+        if (!day || !month || !year) return null;
+        return new Date(year, month - 1, day);
+      }
+      if (str.includes("-")) {
+        const d = new Date(str);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      return null;
+    };
+
+    const fromDate = parseDate(dateFrom);
+    const toDate = parseDate(dateTo);
+
+    if (!fromDate || !toDate || isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+      return res.status(400).json({
+        message: "Invalid date format. Use YYYY-MM-DD or DD/MM/YYYY",
+      });
+    }
+
+    toDate.setHours(23, 59, 59, 999);
+    fromDate.setHours(0, 0, 0, 0);
+
+    console.log("📅 Date Range:", { fromDate, toDate });
+    console.log("💆 Therapies:", selectedTherapies);
+
+    // ── SINGLE PATH: All visits now have therapyBills[] after migration ──
+    // One doc per bill entry per visit
+    const results = await patientModel.aggregate(
+      [
+        {
+          $lookup: {
+            from: "visits",
+            localField: "_id",
+            foreignField: "patientId",
+            as: "visits",
+          },
+        },
+        { $unwind: { path: "$visits", preserveNullAndEmptyArrays: false } },
+        // Only visits that have therapyBills
+        {
+          $match: {
+            "visits.therapyBills.0": { $exists: true },
+          },
+        },
+        // One doc per bill
+        {
+          $unwind: {
+            path: "$visits.therapyBills",
+            preserveNullAndEmptyArrays: false,
+          },
+        },
+        // Project all needed fields including full therapies[] for amount fallback
+        {
+          $project: {
+            idno: 1,
+            firstName: 1,
+            lastName: 1,
+            age: 1,
+            gender: 1,
+            phone: 1,
+            aadharnum: 1,
+            visitDate:         "$visits.date",
+            billDate:          "$visits.therapyBills.billDate",
+            billNumber:        "$visits.therapyBills.billNumber",
+            billTherapies:     "$visits.therapyBills.therapies",   // array of clean names
+            therapyWithAmount: "$visits.therapyWithAmount",         // for receivedAmount lookup
+            visitTherapies:    "$visits.therapies",                 // for amount fallback (new visits)
+            visitDiscounts:    "$visits.discounts.therapies",       // [{ name, percentage }] for discount
+          },
+        },
+      ],
+      { allowDiskUse: true }
     );
-  }
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <p className="text-red-600 text-lg">{error}</p>
-          <Button
-            onClick={() => window.location.reload()}
-            className="mt-4 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white"
-          >
-            Retry
-          </Button>
-        </div>
-      </div>
+    console.log(`📦 Total bill records from DB: ${results.length}`);
+
+    // ── Resolve amount for a single therapy name ──────────────
+    // Uses 4-tier lookup to handle all name format variations:
+    //   Tier 1: Exact match on therapyWithAmount[].name (receivedAmount > 0)
+    //   Tier 2: StartsWith match (handles "(1 session)" suffix)
+    //   Tier 3: Contains match (handles combined multi-therapy strings)
+    //   Tier 4: therapies[].amount fallback (new visits where receivedAmount = 0)
+    const resolveAmount = (tName, therapyWithAmount, visitTherapies, visitDiscounts) => {
+      const cleanName = tName.trim().toLowerCase();
+      const twaList = therapyWithAmount || [];
+      const therapiesList = visitTherapies || [];
+      const discountList = visitDiscounts || [];
+
+      // Find discount for this therapy
+      const discountEntry = discountList.find(
+        (d) => d.name?.trim().toLowerCase() === cleanName
+      );
+      const discountPct = discountEntry ? Number(discountEntry.percentage) || 0 : 0;
+      const applyDiscount = (base) => discountPct > 0 ? Math.round(base * (1 - discountPct / 100)) : base;
+
+      // Tier 1: Exact match
+      const exact = twaList.find(
+        (t) => t.name?.trim().toLowerCase() === cleanName && Number(t.receivedAmount) > 0
+      );
+      if (exact) return applyDiscount(Number(exact.receivedAmount));
+
+      // Tier 2: StartsWith — "Sarvanga Udwartan (1 session)"
+      const startsWith = twaList.find(
+        (t) =>
+          t.name?.trim().toLowerCase().startsWith(cleanName) &&
+          Number(t.receivedAmount) > 0
+      );
+      if (startsWith) return applyDiscount(Number(startsWith.receivedAmount));
+
+      // Tier 3: Contains — combined strings
+      const contains = twaList.find(
+        (t) =>
+          t.name?.trim().toLowerCase().includes(cleanName) &&
+          Number(t.receivedAmount) > 0
+      );
+      if (contains) return applyDiscount(Number(contains.receivedAmount));
+
+      // Tier 4: therapies[].amount fallback
+      const fromTherapies = therapiesList.find(
+        (t) => t.name?.trim().toLowerCase() === cleanName
+      );
+      if (fromTherapies && Number(fromTherapies.amount) > 0) {
+        return applyDiscount(Number(fromTherapies.amount));
+      }
+
+      return 0;
+    };
+
+    // ── Filter by selected therapy + date range ───────────────
+    const filteredRows = results.filter((record) => {
+      const billTherapies = record.billTherapies || [];
+      if (billTherapies.length === 0) return false;
+
+      // Skip name filter when no therapies selected (include all bills)
+      if (!matchAllTherapies) {
+        const hasMatch = billTherapies.some((tName) =>
+          tName && selectedTherapies.includes(tName.trim().toLowerCase())
+        );
+        if (!hasMatch) return false;
+      }
+
+      // Must fall within date range
+      const dateStr = record.billDate || record.visitDate;
+      if (!dateStr) return false;
+
+      const checkDate = parseDate(dateStr);
+      if (!checkDate || isNaN(checkDate.getTime())) return false;
+
+      checkDate.setHours(0, 0, 0, 0);
+      return checkDate >= fromDate && checkDate <= toDate;
+    });
+
+    console.log(`✅ Filtered rows: ${filteredRows.length}`);
+
+    if (filteredRows.length === 0) {
+      return res.status(404).json({
+        message: `No patients found for selected therapies between ${dateFrom} and ${dateTo}.`,
+      });
+    }
+
+    // ── Build Excel rows ──────────────────────────────────────
+    const rows = filteredRows.map((record) => {
+      // Include all therapy names when no filter, else only matching ones
+      const matchingTherapies = matchAllTherapies
+        ? (record.billTherapies || []).filter((tName) => tName && tName.trim() !== "")
+        : (record.billTherapies || []).filter(
+            (tName) => tName && selectedTherapies.includes(tName.trim().toLowerCase())
+          );
+
+      // Sum up amounts for all matching therapies on this bill
+      const totalAmount = matchingTherapies.reduce((sum, tName) => {
+        return sum + resolveAmount(tName, record.therapyWithAmount, record.visitTherapies, record.visitDiscounts);
+      }, 0);
+
+      return {
+        idno:          record.idno || "",
+        billNumber:    record.billNumber || "N/A",
+        name:          `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+        age:           record.age || "",
+        gender:        record.gender || "",
+        phone:         record.phone || "",
+        aadharnum:     record.aadharnum
+                         ? record.aadharnum.toString().padStart(12, "0")
+                         : "",
+        therapyname:   matchingTherapies.join(", "),
+        therapyamount: totalAmount,
+        date:          record.billDate || record.visitDate || "",
+      };
+    });
+
+    // ── Generate Excel ────────────────────────────────────────
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Therapy Report");
+
+    worksheet.columns = [
+      { header: "ID No.",          key: "idno",          width: 15 },
+      { header: "Bill No.",         key: "billNumber",    width: 22 },
+      { header: "Name",             key: "name",          width: 25 },
+      { header: "Age",              key: "age",           width: 10 },
+      { header: "Sex",              key: "gender",        width: 10 },
+      { header: "Mobile",           key: "phone",         width: 15 },
+      { header: "Aadhar No.",       key: "aadharnum",     width: 20 },
+      { header: "Therapy Name",     key: "therapyname",   width: 30 },
+      { header: "Therapy Amount",   key: "therapyamount", width: 15 },
+      { header: "Date",             key: "date",          width: 15 },
+    ];
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font      = { bold: true, size: 12 };
+      cell.fill      = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF00" } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border    = {
+        top: { style: "thin" }, bottom: { style: "thin" },
+        left: { style: "thin" }, right: { style: "thin" },
+      };
+    });
+
+    worksheet.addRows(rows);
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border    = {
+            top: { style: "thin" }, bottom: { style: "thin" },
+            left: { style: "thin" }, right: { style: "thin" },
+          };
+        });
+      }
+    });
+
+    console.log(`✅ Excel generated: ${rows.length} rows`);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Therapy_Report_${new Date().toISOString().split("T")[0]}.xlsx`
     );
+    res.setHeader("Content-Length", buffer.length);
+    res.send(buffer);
+
+  } catch (error) {
+    console.error("❌ Error exporting therapy report:", error);
+    res.status(500).json({
+      message: "Failed to generate therapy report",
+      error: error.message,
+    });
   }
-
-  return (
-    <div className="min-h-screen p-4 md:p-8 bg-gradient-to-br from-orange-50 via-amber-50 to-red-100">
-      <div className="space-y-6">
-        {/* Navigation Tabs */}
-        <div className="flex justify-center">
-          <div className="flex bg-white/80 backdrop-blur-xl border-2 border-white/30 shadow-2xl rounded-2xl p-2">
-            <Button
-              variant={activeTab === "purchase" ? "default" : "ghost"}
-              onClick={() => setActiveTab("purchase")}
-              className={`rounded-xl font-bold px-6 py-3 ${
-                activeTab === "purchase"
-                  ? "bg-gradient-to-r from-amber-500 to-orange-600 text-white"
-                  : ""
-              }`}
-            >
-              <IndianRupee className="h-4 w-4 mr-2" />
-              Purchase
-            </Button>
-            <Button
-              variant={activeTab === "inventory" ? "default" : "ghost"}
-              onClick={() => setActiveTab("inventory")}
-              className={`rounded-xl font-bold px-6 py-3 ${
-                activeTab === "inventory"
-                  ? "bg-gradient-to-r from-orange-500 to-red-600 text-white"
-                  : ""
-              }`}
-            >
-              <Package className="h-4 w-4 mr-2" />
-              Inventory
-            </Button>
-            <Button variant={activeTab === "sales" ? "default" : "ghost"}
-              onClick={() => setActiveTab("sales")}
-              className={`rounded-xl font-bold px-6 py-3 ${
-                activeTab === "sales"
-                  ? "bg-gradient-to-r from-amber-500 to-orange-600 text-white"
-                  : ""
-              }`}
-            >
-              <IndianRupee className="h-4 w-4 mr-2" />
-              Earnings
-            </Button>
-          </div>
-        </div>
-
-        {activeTab === "inventory" && (
-          <>
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card className="bg-white border-gray-200 shadow-lg rounded-2xl">
-  <CardContent className="p-6">
-    <div className="flex items-center justify-between mb-4">
-      <p className="text-gray-600 font-medium text-sm">
-        Closing Stock ({closingStockYear})
-      </p>
-      <div 
-        className="bg-cyan-50 p-2 rounded-lg cursor-pointer hover:bg-cyan-100 transition-colors"
-        onClick={() => {
-          setEditClosingStockValue(closingStock.toString());
-          setIsEditingClosingStock(true);
-        }}
-        title="Edit closing stock"
-      >
-        <Package className="h-5 w-5 text-cyan-500" />
-      </div>
-    </div>
-    <p className="text-3xl font-bold text-gray-900 mb-1">
-      {closingStock}
-    </p>
-    <p className="text-gray-500 text-sm font-medium">
-      Last updated by: {closingStockUpdatedBy || "N/A"}
-    </p>
-  </CardContent>
-</Card>
-
-              <Card className="bg-white border-gray-200 shadow-lg rounded-2xl">
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <p className="text-gray-600 font-medium text-sm">
-                        Total Purchases
-                      </p>
-                      <div className="bg-green-50 p-2 rounded-lg">
-                        <ShoppingCart className="h-5 w-5 text-green-500" />
-                      </div>
-                    </div>
-                    <p className="text-3xl font-bold text-gray-900 mb-1">
-                      {purchases.length}
-                    </p>
-                    <p className="text-green-600 text-sm font-medium">
-                      Purchase invoices recorded
-                    </p>
-                  </CardContent>
-                </Card>
-
-              <Card className="bg-white border-gray-200 shadow-lg rounded-2xl">
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <p className="text-gray-600 font-medium text-sm">
-                      Total Sales
-                    </p>
-                    <div className="bg-yellow-50 p-2 rounded-lg">
-                      <DollarSign className="h-5 w-5 text-yellow-500" />
-                    </div>
-                  </div>
-                  <p className="text-3xl font-bold text-gray-900 mb-1">
-                    {sales.length}
-                  </p>
-                  <p className="text-orange-600 text-sm font-medium">
-                      Sales invoices recorded
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-white border-gray-200 shadow-lg rounded-2xl">
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <p className="text-gray-600 font-medium text-sm">
-                      Current Stock
-                    </p>
-                    <div className="bg-blue-50 p-2 rounded-lg">
-                      <Package className="h-5 w-5 text-blue-500" />
-                    </div>
-                  </div>
-                  <p className="text-3xl font-bold text-gray-900 mb-1">
-                    {Math.floor(getCurrentStock())}
-                  </p>
-                  <p className="text-gray-500 text-sm font-medium">
-                    Total units in inventory
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Search Card */}
-            <Card className="bg-white/80 backdrop-blur-xl border-2 border-white/30 shadow-2xl rounded-3xl">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-2xl font-black bg-gradient-to-r from-orange-600 via-red-600 to-pink-600 bg-clip-text text-transparent flex items-center">
-                  <Pill className="h-6 w-6 mr-2 text-orange-600" />
-                  Ayurveda Medicine Inventory
-                </CardTitle>
-                <div className="flex items-center space-x-4">
-                  {/* Search Bar */}
-                  <div className="relative">
-                    <Search className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-orange-400" />
-                    <Input
-                      type="text"
-                      placeholder="Search medicines..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10 pr-10 w-64 border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                    {searchTerm && (
-                      <button
-                        onClick={() => setSearchTerm("")}
-                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-orange-400 hover:text-orange-600"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    )}
-                  </div>
-                  <Button
-                    onClick={() => setIsAddingMedicine(true)}
-                    className="bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold py-3 px-6 rounded-2xl shadow-lg hover:shadow-xl"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Medicine
-                  </Button>
-                </div>
-              </CardHeader>
-
-              {/* Edit Closing Stock Modal */}
-{isEditingClosingStock && (
-  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <Card className="w-full max-w-md bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl">
-      <CardHeader>
-        <CardTitle className="text-xl font-bold text-cyan-800">
-          Edit Closing Stock for {closingStockYear}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div>
-          <Label htmlFor="closingStockValue" className="text-cyan-700 font-semibold">
-            Closing Stock Value *
-          </Label>
-          <Input
-            id="closingStockValue"
-            type="number"
-            value={editClosingStockValue}
-            onChange={(e) => setEditClosingStockValue(e.target.value)}
-            placeholder="Enter closing stock quantity"
-            className="border-cyan-200 focus:border-cyan-400 focus:ring-cyan-200"
-            min="0"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="closingStockYear" className="text-cyan-700 font-semibold">
-            Year
-          </Label>
-          <Input
-            id="closingStockYear"
-            type="number"
-            value={closingStockYear}
-            onChange={(e) => setClosingStockYear(parseInt(e.target.value))}
-            placeholder="Enter year"
-            className="border-cyan-200 focus:border-cyan-400 focus:ring-cyan-200"
-            min="2000"
-            max="2100"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="updatedBy" className="text-cyan-700 font-semibold">
-            Updated By
-          </Label>
-          <Input
-            id="updatedBy"
-            value={closingStockUpdatedBy}
-            onChange={(e) => setClosingStockUpdatedBy(e.target.value)}
-            placeholder="Enter your name"
-            className="border-cyan-200 focus:border-cyan-400 focus:ring-cyan-200"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="closingStockNotes" className="text-cyan-700 font-semibold">
-            Notes (Optional)
-          </Label>
-          <Textarea
-            id="closingStockNotes"
-            value={closingStockNotes}
-            onChange={(e) => setClosingStockNotes(e.target.value)}
-            placeholder="Add any notes about this closing stock..."
-            className="border-cyan-200 focus:border-cyan-400 focus:ring-cyan-200"
-            rows={3}
-          />
-        </div>
-
-        <div className="bg-cyan-50 p-3 rounded-lg">
-          <p className="text-sm text-cyan-700">
-            <strong>Current Stock:</strong> {Math.floor(getCurrentStock())} units
-          </p>
-          <p className="text-xs text-cyan-600 mt-1">
-            This is the fixed closing stock for year {closingStockYear}. It can be different from current inventory.
-          </p>
-        </div>
-
-        <div className="flex space-x-2 pt-4">
-          <Button
-            onClick={handleUpdateClosingStock}
-            className="flex-1 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold py-3 rounded-2xl"
-          >
-            Update Closing Stock
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              setIsEditingClosingStock(false);
-              setEditClosingStockValue("");
-            }}
-            className="flex-1 border-cyan-300 text-cyan-600 hover:bg-cyan-50 font-bold py-3 rounded-2xl"
-          >
-            Cancel
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  </div>
-)}
-
-              {/* Show search prompt when no search term is entered */}
-              {searchTerm.trim() === "" && (
-                <CardContent className="text-center py-20">
-                  <div className="p-8 bg-gradient-to-br from-orange-100 to-amber-300 rounded-full w-32 h-32 mx-auto mb-8 flex items-center justify-center shadow-2xl">
-                    <Search className="h-16 w-16 text-orange-600" />
-                  </div>
-                  <h3 className="text-3xl font-black text-orange-900 mb-4">
-                    Start Your Medicine Search
-                  </h3>
-                  <p className="text-xl text-orange-700 font-semibold">
-                    Enter a medicine name, code, or supplier to begin searching
-                  </p>
-                </CardContent>
-              )}
-
-              {/* Medicine Inventory Table - only show when search is active */}
-              {searchTerm.trim() !== "" && (
-                <CardContent>
-                  <div className="space-y-4">
-                    {/* Search Results Info */}
-                    <div className="text-sm text-gray-600 bg-orange-50 p-3 rounded-lg">
-                      Found {filteredMedicines.length} medicine(s) matching "
-                      {searchTerm}"
-                    </div>
-
-                    {/* Pagination Info - only show if there are results */}
-                    {filteredMedicines.length > 0 && (
-                      <div className="flex justify-between items-center text-sm text-gray-600">
-                        <span>
-                          Showing {startIndex + 1} to{" "}
-                          {Math.min(endIndex, filteredMedicines.length)} of{" "}
-                          {filteredMedicines.length} medicines
-                          {searchTerm &&
-                            ` (filtered from ${medicines.length} total)`}
-                        </span>
-                        <span>
-                          Page {currentPage} of {totalPages}
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Show table only if there are results */}
-                    {filteredMedicines.length > 0 ? (
-                      <>
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Code</TableHead>
-                              <TableHead>Medicine Name</TableHead>
-                              <TableHead>Unit</TableHead>
-                              <TableHead>Supplier</TableHead>
-                              <TableHead>Quantity</TableHead>
-                              <TableHead>Price (₹)</TableHead>
-                              <TableHead>Status</TableHead>
-                              <TableHead>Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {currentMedicines.map((medicine) => (
-                              <TableRow key={medicine.id}>
-                                <TableCell className="font-medium">
-                                  {medicine.Code}
-                                </TableCell>
-                                <TableCell>
-                                  {medicine["Product Name"]}
-                                </TableCell>
-                                <TableCell>{medicine.Unit}</TableCell>
-                                <TableCell>{medicine.Company}</TableCell>
-                                <TableCell>{medicine.Quantity}</TableCell>
-                                <TableCell>₹{medicine.Price}</TableCell>
-                                <TableCell>
-                                  {medicine.Quantity <= MIN_STOCK ? (
-                                    <span className="bg-red-100 text-red-800 px-2 py-1 rounded-full text-xs font-semibold">
-                                      Low Stock
-                                    </span>
-                                  ) : (
-                                    <span className="bg-orange-100 text-orange-800 px-2 py-1 rounded-full text-xs font-semibold">
-                                      In Stock
-                                    </span>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex space-x-2">
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => openEditModal(medicine)}
-                                      className="border-orange-300 text-orange-600 hover:bg-orange-50"
-                                    >
-                                      <Edit className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() =>
-                                        handleDeleteMedicine(medicine.Code)
-                                      }
-                                      className="text-red-600 border-red-300 hover:bg-red-50"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  </div>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-
-                        {/* Pagination Controls */}
-                        {totalPages > 1 && (
-                          <Pagination>
-                            <PaginationContent>
-                              <PaginationItem>
-                                <PaginationPrevious
-                                  onClick={() =>
-                                    setCurrentPage(Math.max(1, currentPage - 1))
-                                  }
-                                  className={
-                                    currentPage === 1
-                                      ? "pointer-events-none opacity-50"
-                                      : "cursor-pointer hover:bg-orange-50"
-                                  }
-                                />
-                              </PaginationItem>
-
-                              {currentPage > 3 && (
-                                <>
-                                  <PaginationItem>
-                                    <PaginationLink
-                                      onClick={() => setCurrentPage(1)}
-                                      className="cursor-pointer hover:bg-orange-50"
-                                    >
-                                      1
-                                    </PaginationLink>
-                                  </PaginationItem>
-                                  {currentPage > 4 && (
-                                    <PaginationItem>
-                                      <PaginationEllipsis />
-                                    </PaginationItem>
-                                  )}
-                                </>
-                              )}
-
-                              {getPageNumbers().map((pageNumber) => (
-                                <PaginationItem key={pageNumber}>
-                                  <PaginationLink
-                                    onClick={() => setCurrentPage(pageNumber)}
-                                    isActive={currentPage === pageNumber}
-                                    className={`cursor-pointer ${
-                                      currentPage === pageNumber
-                                        ? "bg-orange-500 text-white"
-                                        : "hover:bg-orange-50"
-                                    }`}
-                                  >
-                                    {pageNumber}
-                                  </PaginationLink>
-                                </PaginationItem>
-                              ))}
-
-                              {currentPage < totalPages - 2 && (
-                                <>
-                                  {currentPage < totalPages - 3 && (
-                                    <PaginationItem>
-                                      <PaginationEllipsis />
-                                    </PaginationItem>
-                                  )}
-                                  <PaginationItem>
-                                    <PaginationLink
-                                      onClick={() => setCurrentPage(totalPages)}
-                                      className="cursor-pointer hover:bg-orange-50"
-                                    >
-                                      {totalPages}
-                                    </PaginationLink>
-                                  </PaginationItem>
-                                </>
-                              )}
-
-                              <PaginationItem>
-                                <PaginationNext
-                                  onClick={() =>
-                                    setCurrentPage(
-                                      Math.min(totalPages, currentPage + 1)
-                                    )
-                                  }
-                                  className={
-                                    currentPage === totalPages
-                                      ? "pointer-events-none opacity-50"
-                                      : "cursor-pointer hover:bg-orange-50"
-                                  }
-                                />
-                              </PaginationItem>
-                            </PaginationContent>
-                          </Pagination>
-                        )}
-                      </>
-                    ) : (
-                      /* No medicines found message */
-                      <div className="text-center py-20">
-                        <div className="p-8 bg-gradient-to-br from-orange-100 to-amber-300 rounded-full w-32 h-32 mx-auto mb-8 flex items-center justify-center shadow-2xl">
-                          <Pill className="h-16 w-16 text-orange-600" />
-                        </div>
-                        <h3 className="text-3xl font-black text-orange-900 mb-4">
-                          No medicines found
-                        </h3>
-                        <p className="text-xl text-orange-700 font-semibold">
-                          Try adjusting your search criteria or check the
-                          spelling
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              )}
-            </Card>
-          </>
-        )}
-        {activeTab==="purchase" && (
-          <PurchaseForm/>
-        )}
-        {activeTab === "sales" && (
-          <>
-            <div className="flex flex-wrap md:flex-nowrap gap-4 mb-6">
-              <Card className="flex-1 bg-gradient-to-r from-orange-100 to-orange-200 border-2 border-orange-300 shadow-lg rounded-2xl">
-                <CardHeader>
-                  <CardTitle className="text-xl font-bold text-orange-800">
-                    Today's Sales
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-2xl font-extrabold text-orange-600">
-                    ₹{salesSummary.todayTotal.toFixed(2)}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="flex-1 bg-gradient-to-r from-amber-100 to-amber-200 border-2 border-amber-300 shadow-lg rounded-2xl">
-                <CardHeader>
-                  <CardTitle className="text-xl font-bold text-amber-800">
-                    Monthly Sales
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-2xl font-extrabold text-amber-600">
-                    ₹{salesSummary.monthlyTotal.toFixed(2)}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="flex-1 bg-gradient-to-r from-red-100 to-red-200 border-2 border-red-300 shadow-lg rounded-2xl">
-                <CardHeader>
-                  <CardTitle className="text-xl font-bold text-red-800">
-                    Total Sales
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-2xl font-extrabold text-red-600">
-                    ₹{salesSummary.overallTotal.toFixed(2)}
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card className="bg-white/80 backdrop-blur-xl border-2 border-white/30 shadow-2xl rounded-3xl">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-2xl font-black bg-gradient-to-r from-orange-600 via-amber-600 to-red-600 bg-clip-text text-transparent flex items-center">
-                  <ShoppingCart className="h-6 w-6 mr-2 text-orange-600" />
-                  Sales History
-                </CardTitle>
-                <Button
-                  onClick={() => setIsRecordingSale(true)}
-                  className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold py-3 px-6 rounded-2xl shadow-lg hover:shadow-xl"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Record Sale
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {/* Sales Pagination Info */}
-                  <div className="flex justify-between items-center text-sm text-gray-600">
-                    <span>
-                      Showing {salesStartIndex + 1} to{" "}
-                      {Math.min(salesEndIndex, sales.length)} of {sales.length}{" "}
-                      sales
-                    </span>
-                    <span>
-                      Page {salesCurrentPage} of {salesTotalPages}
-                    </span>
-                  </div>
-
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Patient ID</TableHead>
-                        <TableHead>Patient Name</TableHead>
-                        <TableHead>Medicines Count</TableHead>
-                        <TableHead>Subtotal (₹)</TableHead>
-                        <TableHead>SGST (₹)</TableHead>
-                        <TableHead>CGST (₹)</TableHead>
-                        <TableHead>Total Amount (₹)</TableHead>
-                        <TableHead>Sale Date</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {currentSales.length === 0 ? (
-                        <TableRow>
-                          <TableCell
-                            colSpan={8}
-                            className="text-center text-gray-500 py-8"
-                          >
-                            No sales to display.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        currentSales.map((sale) => (
-  <TableRow key={sale._id}>
-    <TableCell className="font-medium">
-      {sale.patientId}
-    </TableCell>
-    <TableCell>{sale.patientName}</TableCell>
-    <TableCell>{sale.medicines?.length || 0}</TableCell>
-    <TableCell>₹{sale.subtotal?.toFixed(2) || '0.00'}</TableCell>
-    <TableCell>₹{sale.sgst?.toFixed(2) || '0.00'}</TableCell>
-    <TableCell>₹{sale.cgst?.toFixed(2) || '0.00'}</TableCell>
-    <TableCell className="font-bold text-orange-600">
-      ₹{sale.totalAmount?.toFixed(2) || '0.00'}
-    </TableCell>
-    <TableCell>{sale.saleDate}</TableCell>
-    
-<TableCell>
-  <div className="flex space-x-2 justify-center">
-    {/* Edit button - visible to users with edit permission */}
-    {canEdit() && (
-      <Button
-        onClick={() => handleEditSale(sale._id)}
-        variant="outline"
-        size="sm"
-        className="border-blue-300 text-blue-600 hover:bg-blue-50 transition-colors"
-        title="Edit Sale"
-      >
-        <Edit className="h-4 w-4" />
-      </Button>
-    )}
-    
-    {/* Delete button - visible only to admins */}
-    {canDelete() && (
-      <Button
-        onClick={() => handleDeleteSale(sale._id)}
-        variant="outline"
-        size="sm"
-        className="border-red-300 text-red-600 hover:bg-red-50 transition-colors"
-        title="Delete Sale (Admin Only)"
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
-    )}
-    
-    {/* Show message if no permissions */}
-    {!canEdit() && !canDelete() && (
-      <span className="text-xs text-gray-400 italic px-2 py-1 bg-gray-50 rounded">
-        No access
-      </span>
-    )}
-  </div>
-</TableCell>
-  </TableRow>
-))
-                      )}
-                    </TableBody>
-                  </Table>
-
-                  {/* Sales Pagination Controls */}
-                  {salesTotalPages > 1 && (
-                    <Pagination>
-                      <PaginationContent>
-                        <PaginationItem>
-                          <PaginationPrevious
-                            onClick={() =>
-                              setSalesCurrentPage(
-                                Math.max(1, salesCurrentPage - 1)
-                              )
-                            }
-                            className={
-                              salesCurrentPage === 1
-                                ? "pointer-events-none opacity-50"
-                                : "cursor-pointer hover:bg-orange-50"
-                            }
-                          />
-                        </PaginationItem>
-
-                        {salesCurrentPage > 3 && (
-                          <>
-                            <PaginationItem>
-                              <PaginationLink
-                                onClick={() => setSalesCurrentPage(1)}
-                                className="cursor-pointer hover:bg-orange-50"
-                              >
-                                1
-                              </PaginationLink>
-                            </PaginationItem>
-                            {salesCurrentPage > 4 && (
-                              <PaginationItem>
-                                <PaginationEllipsis />
-                              </PaginationItem>
-                            )}
-                          </>
-                        )}
-
-                        {getSalesPageNumbers().map((pageNumber) => (
-                          <PaginationItem key={pageNumber}>
-                            <PaginationLink
-                              onClick={() => setSalesCurrentPage(pageNumber)}
-                              isActive={salesCurrentPage === pageNumber}
-                              className={`cursor-pointer ${
-                                salesCurrentPage === pageNumber
-                                  ? "bg-orange-500 text-white"
-                                  : "hover:bg-orange-50"
-                              }`}
-                            >
-                              {pageNumber}
-                            </PaginationLink>
-                          </PaginationItem>
-                        ))}
-
-                        {salesCurrentPage < salesTotalPages - 2 && (
-                          <>
-                            {salesCurrentPage < salesTotalPages - 3 && (
-                              <PaginationItem>
-                                <PaginationEllipsis />
-                              </PaginationItem>
-                            )}
-                            <PaginationItem>
-                              <PaginationLink
-                                onClick={() =>
-                                  setSalesCurrentPage(salesTotalPages)
-                                }
-                                className="cursor-pointer hover:bg-orange-50"
-                              >
-                                {salesTotalPages}
-                              </PaginationLink>
-                            </PaginationItem>
-                          </>
-                        )}
-
-                        <PaginationItem>
-                          <PaginationNext
-                            onClick={() =>
-                              setSalesCurrentPage(
-                                Math.min(salesTotalPages, salesCurrentPage + 1)
-                              )
-                            }
-                            className={
-                              salesCurrentPage === salesTotalPages
-                                ? "pointer-events-none opacity-50"
-                                : "cursor-pointer hover:bg-orange-50"
-                            }
-                          />
-                        </PaginationItem>
-                      </PaginationContent>
-                    </Pagination>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
-
-        {/* Add/Edit Medicine Modal */}
-        {(isAddingMedicine || isEditingMedicine) && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <Card className="w-full max-w-md bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl">
-              <CardHeader>
-                <CardTitle className="text-xl font-bold text-orange-800">
-                  {isEditingMedicine ? "Edit Medicine" : "Add New Medicine"}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Label
-                    htmlFor="code"
-                    className="text-orange-700 font-semibold"
-                  >
-                    Code
-                  </Label>
-                  <Input
-                    id="code"
-                    value={newMedicine.code}
-                    onChange={(e) =>
-                      setNewMedicine({ ...newMedicine, code: e.target.value })
-                    }
-                    placeholder="Enter medicine code"
-                    className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor="productName"
-                    className="text-orange-700 font-semibold"
-                  >
-                    Medicine Name
-                  </Label>
-                  <Input
-                    id="productName"
-                    value={newMedicine.productName}
-                    onChange={(e) =>
-                      setNewMedicine({
-                        ...newMedicine,
-                        productName: e.target.value,
-                      })
-                    }
-                    placeholder="Enter medicine name"
-                    className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor="unit"
-                    className="text-orange-700 font-semibold"
-                  >
-                    Category
-                  </Label>
-                  <Input
-                    id="unit"
-                    value={newMedicine.unit}
-                    onChange={(e) =>
-                      setNewMedicine({ ...newMedicine, unit: e.target.value })
-                    }
-                    placeholder="Enter category (e.g., TAB, SYP, CHUN)"
-                    className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor="company"
-                    className="text-orange-700 font-semibold"
-                  >
-                    Supplier
-                  </Label>
-                  <Input
-                    id="company"
-                    value={newMedicine.company}
-                    onChange={(e) =>
-                      setNewMedicine({
-                        ...newMedicine,
-                        company: e.target.value,
-                      })
-                    }
-                    placeholder="Enter supplier name"
-                    className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor="quantity"
-                    className="text-orange-700 font-semibold"
-                  >
-                    Quantity
-                  </Label>
-                  <Input
-                    id="quantity"
-                    type="number"
-                    value={newMedicine.quantity}
-                    onChange={(e) =>
-                      setNewMedicine({
-                        ...newMedicine,
-                        quantity: e.target.value,
-                      })
-                    }
-                    placeholder="Enter quantity"
-                    className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor="price"
-                    className="text-orange-700 font-semibold"
-                  >
-                    Price (₹)
-                  </Label>
-                  <Input
-                    id="price"
-                    type="number"
-                    step="0.01"
-                    value={newMedicine.price}
-                    onChange={(e) =>
-                      setNewMedicine({ ...newMedicine, price: e.target.value })
-                    }
-                    placeholder="Enter price in INR"
-                    className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                  />
-                </div>
-                <div className="flex space-x-2 pt-4">
-                  <Button
-                    onClick={
-                      isEditingMedicine ? handleEditMedicine : handleAddMedicine
-                    }
-                    className="flex-1 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold py-3 rounded-2xl"
-                  >
-                    {isEditingMedicine ? "Update Medicine" : "Add Medicine"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleModalCancel}
-                    className="flex-1 border-orange-300 text-orange-600 hover:bg-orange-50 font-bold py-3 rounded-2xl"
-                  >
-                    Back
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Record Sale Modal */}
-        {isRecordingSale && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <Card className="w-full max-w-4xl bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
-              <CardHeader>
-                <CardTitle className="text-xl font-bold text-orange-800">
-                  Record Sale
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Patient Details */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label
-                      htmlFor="patientId"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Patient ID *
-                    </Label>
-                    <Input
-                      id="patientId"
-                      value={newSale.patientId}
-                      onChange={(e) =>
-                        setNewSale({ ...newSale, patientId: e.target.value })
-                      }
-                      placeholder="Enter patient ID"
-                      required
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-                  <div>
-                    <Label
-                      htmlFor="patientName"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Patient Name *
-                    </Label>
-                    <Input
-                      id="patientName"
-                      value={newSale.patientName}
-                      onChange={(e) =>
-                        setNewSale({ ...newSale, patientName: e.target.value })
-                      }
-                      placeholder="Enter patient name"
-                      required
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <Label
-                    htmlFor="saleDate"
-                    className="text-orange-700 font-semibold"
-                  >
-                    Sale Date
-                  </Label>
-                  <Input
-                    id="saleDate"
-                    type="date" 
-                    value={newSale.saleDate}
-                    onChange={(e) =>
-                      setNewSale({ ...newSale, saleDate: e.target.value })
-                    }
-                    className="border-orange-200 bg-gray-100 text-gray-600"
-                  />
-                </div>
-
-                {/* Add Medicine Section */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {/* Medicine Name */}
-                  <div className="relative" ref={wrapperRef}>
-                    <Label
-                      htmlFor="medicineName"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Medicine Name
-                    </Label>
-                    <Input
-                      id="medicineName"
-                      value={currentMedicine.medicineName}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCurrentMedicine({
-                          ...currentMedicine,
-                          medicineName: val,
-                        });
-                        // ✅ FIX: Reset stock tracker when user types manually (no suggestion selected)
-                        setSelectedMedicineStock(null);
-                        fetchSuggestions(val);
-                      }}
-                      placeholder="Enter medicine name"
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                      autoComplete="off"
-                    />
-
-                    {showSuggestions && suggestions.length > 0 && (
-                      <ul className="absolute z-10 w-full bg-white border border-orange-200 mt-1 max-h-60 overflow-y-auto rounded-md shadow-md">
-                        {suggestions.map((med) => (
-                          <li
-                            key={med.Code}
-                            onClick={() => {
-                              setCurrentMedicine({
-                                ...currentMedicine,
-                                medicineName: med["Product Name"],
-                                pricePerUnit: med.Price?.toString() || "",
-                                hsn: med.HSN || currentMedicine.hsn,
-                              });
-                              // ✅ FIX: Save the available stock so we can validate before adding to bill
-                              setSelectedMedicineStock(med.Quantity ?? null);
-                              setShowSuggestions(false);
-                            }}
-                            className="px-4 py-2 hover:bg-orange-100 cursor-pointer"
-                          >
-                            {med["Product Name"]}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  {/* Batch */}
-                  <div>
-                    <Label
-                      htmlFor="batch"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Batch
-                    </Label>
-                    <Input
-                      id="batch"
-                      value={currentMedicine.batch}
-                      onChange={(e) =>
-                        setCurrentMedicine({
-                          ...currentMedicine,
-                          batch: e.target.value,
-                        })
-                      }
-                      placeholder="Enter batch number"
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-
-                  {/* HSN Number */}
-                  <div>
-                    <Label
-                      htmlFor="hsn"
-                      className="text-orange-700 font-semibold"
-                    >
-                      HSN Number
-                    </Label>
-                    <Input
-                      id="hsn"
-                      value={currentMedicine.hsn}
-                      onChange={(e) =>
-                        setCurrentMedicine({
-                          ...currentMedicine,
-                          hsn: e.target.value,
-                        })
-                      }
-                      placeholder="Enter HSN number"
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-
-                  {/* Expiry */}
-                  <div>
-                    <Label
-                      htmlFor="expiry"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Expiry Date
-                    </Label>
-                    <Input
-                      id="expiry"
-                      type="date"
-                      min={new Date().toISOString().split("T")[0]}
-                      value={currentMedicine.expiry}
-                      onChange={(e) =>
-                        setCurrentMedicine({
-                          ...currentMedicine,
-                          expiry: e.target.value,
-                        })
-                      }
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-
-                  {/* Price per Unit */}
-                  <div>
-                    <Label
-                      htmlFor="pricePerUnit"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Price per Unit (₹) *
-                    </Label>
-                    <Input
-                      id="pricePerUnit"
-                      type="number"
-                      step="0.01"
-                      value={currentMedicine.pricePerUnit}
-                      onChange={(e) =>
-                        setCurrentMedicine({
-                          ...currentMedicine,
-                          pricePerUnit: e.target.value,
-                        })
-                      }
-                      placeholder="Enter price per unit"
-                      min="0.01"
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-
-                  {/* Quantity */}
-                  <div>
-                    <Label
-                      htmlFor="quantity"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Quantity *
-                    </Label>
-                    <Input
-                      id="quantity"
-                      type="number"
-                      step="0.01"
-                      value={currentMedicine.quantity}
-                      onChange={(e) =>
-                        setCurrentMedicine({
-                          ...currentMedicine,
-                          quantity: e.target.value,
-                        })
-                      }
-                      placeholder="Enter quantity"
-                      min="0.01"
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-
-                  {/* Add Medicine Button */}
-                  <div className="flex items-end">
-                    <Button
-                      onClick={addMedicineToSale}
-                      className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold py-3 rounded-2xl"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Medicine
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Added Medicines List */}
-                {newSale.medicines.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-bold text-orange-800 mb-4">
-                      Added Medicines
-                    </h3>
-                    <div className="space-y-2">
-                      {newSale.medicines.map((medicine) => (
-                        <div
-                          key={medicine.id}
-                          className="flex items-center justify-between bg-white p-3 rounded-lg border border-orange-200"
-                        >
-                          <div className="flex-1">
-                            <span className="font-medium">
-                              {medicine.medicineName}
-                            </span>
-                            {medicine.batch && (
-                              <span className="text-sm text-gray-600 ml-2">
-                                (Batch: {medicine.batch})
-                              </span>
-                            )}
-                            <div className="text-sm text-gray-600">
-                              Qty: {medicine.quantity} × ₹
-                              {medicine.pricePerUnit} = ₹
-                              {medicine.totalPrice.toFixed(2)}
-                            </div>
-                          </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => removeMedicineFromSale(medicine.id)}
-                            className="text-red-600 border-red-300 hover:bg-red-50"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Total Calculation */}
-                {newSale.medicines.length > 0 && (
-                  <div className="bg-orange-50 p-4 rounded-2xl border-2 border-orange-200">
-                    <h3 className="text-lg font-bold text-orange-800 mb-3">
-                      Bill Summary
-                    </h3>
-                    <div className="space-y-2 text-sm">
-  <div className="flex justify-between">
-    <span>Subtotal:</span>
-    <span>₹{calculateSaleTotal().subtotal.toFixed(2)}</span>
-  </div>
-  {newSale.discount && (
-    <div className="flex justify-between">
-      <span>Discount ({newSale.discount}%):</span>
-      <span>- ₹{calculateSaleTotal().discountAmount.toFixed(2)}</span>
-    </div>
-  )}
-  <div className="flex justify-between">
-    <span>SGST (2.5%):</span>
-    <span>₹{calculateSaleTotal().sgst.toFixed(2)}</span>
-  </div>
-  <div className="flex justify-between">
-    <span>CGST (2.5%):</span>
-    <span>₹{calculateSaleTotal().cgst.toFixed(2)}</span>
-  </div>
-  <div className="flex justify-between">
-    <span>Roundoff:</span>
-    <span>₹{calculateSaleTotal().roundoff.toFixed(2)}</span>
-  </div>
-  <div className="flex justify-between font-bold text-lg border-t border-orange-300 pt-2">
-    <span>Grand Total:</span>
-    <span>₹{calculateSaleTotal().totalAmount.toFixed(2)}</span>
-  </div>
-</div>
-                  </div>
-                )}
-
-                {/* Discount Section */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label
-                      htmlFor="discount"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Discount (%)
-                    </Label>
-                    <Input
-                      id="discount"
-                      type="number"
-                      value={newSale.discount || ""}
-                      onChange={(e) =>
-                        setNewSale({
-                          ...newSale,
-                          discount: e.target.value,
-                        })
-                      }
-                      placeholder="Enter discount percentage"
-                      min="0"
-                      max="100"
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-                  <div>
-                    <Label
-                      htmlFor="discountApprovedBy"
-                      className="text-orange-700 font-semibold"
-                    >
-                      Approved By
-                    </Label>
-                    <Input
-                      id="discountApprovedBy"
-                      value={newSale.discountApprovedBy || ""}
-                      onChange={(e) =>
-                        setNewSale({
-                          ...newSale,
-                          discountApprovedBy: e.target.value,
-                        })
-                      }
-                      placeholder="Enter approver's name"
-                      className="border-orange-200 focus:border-orange-400 focus:ring-orange-200"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex space-x-2 pt-4">
-                  <Button
-                    onClick={handleRecordSale}
-                    className="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold py-3 rounded-2xl"
-                  >
-                    Record Sale
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setIsRecordingSale(false);
-                      setNewSale({
-                        patientId: "",
-                        patientName: "",
-                        medicines: [],
-                        saleDate: new Date().toISOString().split("T")[0],
-                        discount: "",
-                        discountApprovedBy: "",
-                      });
-                      setCurrentMedicine({
-                        medicineName: "",
-                        batch: "",
-                        hsn: "",
-                        expiry: "",
-                        pricePerUnit: "",
-                        quantity: "",
-                      });
-                    }}
-                    className="flex-1 border-orange-300 text-orange-600 hover:bg-orange-50 font-bold py-3 rounded-2xl"
-                  >
-                    Back
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+};
 
 
-{/* Edit Sale Modal */}
-{isEditingSale && (
-  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto py-8">
-    <Card className="w-full max-w-4xl bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl my-8">
-      <CardHeader className="bg-gradient-to-r from-blue-500 to-blue-700 text-white rounded-t-3xl">
-        <CardTitle className="text-2xl font-black">
-          Update Sale
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-6 p-6 max-h-[80vh] overflow-y-auto">
-        {/* Patient Information */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor="edit-patientId" className="text-blue-700 font-semibold">
-              Patient ID *
-            </Label>
-            <Input
-              id="edit-patientId"
-              value={editSale.patientId}
-              onChange={(e) =>
-                setEditSale({ ...editSale, patientId: e.target.value })
-              }
-              placeholder="Enter patient ID"
-              className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-            />
-          </div>
-          <div>
-            <Label htmlFor="edit-patientName" className="text-blue-700 font-semibold">
-              Patient Name *
-            </Label>
-            <Input
-              id="edit-patientName"
-              value={editSale.patientName}
-              onChange={(e) =>
-                setEditSale({ ...editSale, patientName: e.target.value })
-              }
-              placeholder="Enter patient name"
-              className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-            />
-          </div>
-        </div>
+const exportBalanceReport = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
 
-        {/* Sale Date */}
-        <div>
-          <Label htmlFor="edit-saleDate" className="text-blue-700 font-semibold">
-            Sale Date
-          </Label>
-          <Input
-            id="edit-saleDate"
-            type="date"
-            value={editSale.saleDate}
-            onChange={(e) =>
-              setEditSale({ ...editSale, saleDate: e.target.value })
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ message: "Missing dateFrom or dateTo" });
+    }
+
+    // Convert DD/MM/YYYY to Date
+    const parseDDMMYYYY = (str) => {
+      const [d, m, y] = str.split("/").map(Number);
+      return new Date(y, m - 1, d);
+    };
+
+    const fromDate = parseDDMMYYYY(dateFrom);
+    const toDate = parseDDMMYYYY(dateTo);
+    fromDate.setHours(0, 0, 0, 0);
+    toDate.setHours(23, 59, 59, 999);
+
+    // 🔥 Single aggregated query instead of N+1 queries
+    const data = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      {
+        $project: {
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          phone: 1,
+          visits: {
+            date: 1,
+            balance: 1,
+          },
+        },
+      },
+    ]);
+
+    const rows = [];
+
+    for (const p of data) {
+      const name = `${p.firstName || ""} ${p.lastName || ""}`.trim();
+
+      for (const v of p.visits) {
+        if (!v.date || !v.balance) continue;
+
+        const visitDate = parseDDMMYYYY(v.date);
+        if (visitDate < fromDate || visitDate > toDate) continue;
+
+        const base = {
+          idno: p.idno || "",
+          name,
+          phone: p.phone || "",
+          date: v.date,
+        };
+
+        // Consultation
+        if (Number(v.balance.consultation) > 0) {
+          rows.push({
+            ...base,
+            purpose: "Consultation",
+            amount: v.balance.consultation,
+          });
+        }
+
+        // Prakriti
+        if (Number(v.balance.prakritiparikshan) > 0) {
+          rows.push({
+            ...base,
+            purpose: "Prakriti Parikshan",
+            amount: v.balance.prakritiparikshan,
+          });
+        }
+
+        // Therapies
+        if (Array.isArray(v.balance.therapies)) {
+          for (const t of v.balance.therapies) {
+            if (Number(t.balance) > 0) {
+              rows.push({
+                ...base,
+                purpose: `Therapy - ${t.name}`,
+                amount: t.balance,
+              });
             }
-            className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-          />
-        </div>
+          }
+        }
 
-        {/* Existing Medicines - WITH INLINE EDITING */}
-        {editSale.medicines.length > 0 && (
-          <div className="bg-blue-50 p-4 rounded-2xl border-2 border-blue-300">
-            <h3 className="text-lg font-bold text-blue-800 mb-4">
-              Current Medicines (Click to Edit)
-            </h3>
-            <div className="space-y-3">
-              {editSale.medicines.map((medicine) => (
-                <div
-                  key={medicine.id}
-                  className="bg-white p-4 rounded-lg border border-blue-200"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex-1">
-                      <span className="font-medium text-lg">
-                        {medicine.medicineName}
-                      </span>
-                      {medicine.batch && (
-                        <span className="text-sm text-gray-600 ml-2">
-                          (Batch: {medicine.batch})
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => removeMedicineFromEditSale(medicine.id)}
-                      className="text-red-600 border-red-300 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  
-                  {/* Editable Quantity and Price */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <Label className="text-xs text-gray-600">Quantity</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={medicine.quantity}
-                        onChange={(e) =>
-                          updateMedicineQuantityInEdit(
-                            medicine.id,
-                            parseFloat(e.target.value) || 0
-                          )
-                        }
-                        className="border-blue-200 focus:border-blue-400"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs text-gray-600">Price/Unit (₹)</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={medicine.pricePerUnit}
-                        onChange={(e) =>
-                          updateMedicinePriceInEdit(
-                            medicine.id,
-                            parseFloat(e.target.value) || 0
-                          )
-                        }
-                        className="border-blue-200 focus:border-blue-400"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs text-gray-600">Total (₹)</Label>
-                      <Input
-                        value={medicine.totalPrice.toFixed(2)}
-                        disabled
-                        className="bg-gray-100 border-gray-200"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Add New Medicine Section - WITH AUTOCOMPLETE */}
-        <div className="bg-blue-50 p-4 rounded-2xl border-2 border-blue-200">
-          <h3 className="text-lg font-bold text-blue-800 mb-4">
-            Add New Medicine
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {/* Medicine Name with Autocomplete */}
-            <div className="relative" ref={editWrapperRef}>
-              <Label className="text-blue-700 font-semibold">
-                Medicine Name *
-              </Label>
-              <Input
-                value={editCurrentMedicine.medicineName}
-                onChange={(e) => {
-                  setEditCurrentMedicine({
-                    ...editCurrentMedicine,
-                    medicineName: e.target.value,
-                  });
-                  fetchEditSuggestions(e.target.value);
-                }}
-                placeholder="Start typing medicine name..."
-                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-              />
-              {showEditSuggestions && editSuggestions.length > 0 && (
-                <ul className="absolute z-50 w-full bg-white border border-blue-300 rounded-lg mt-1 max-h-60 overflow-auto shadow-lg">
-                  {editSuggestions.map((med: any) => (
-                    <li
-                      key={med.Code}
-                      onClick={() => handleEditSuggestionClick(med)}
-                      className="p-3 hover:bg-blue-50 cursor-pointer border-b last:border-b-0"
-                    >
-                      <div className="font-medium text-blue-900">
-                        {med["Product Name"]}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        Code: {med.Code} | Stock: {med.Quantity} | Price: ₹
-                        {med.Price}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            {/* Batch */}
-            <div>
-              <Label className="text-blue-700 font-semibold">Batch</Label>
-              <Input
-                value={editCurrentMedicine.batch}
-                onChange={(e) =>
-                  setEditCurrentMedicine({
-                    ...editCurrentMedicine,
-                    batch: e.target.value,
-                  })
-                }
-                placeholder="Enter batch number"
-                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-              />
-            </div>
-
-            {/* HSN Number */}
-            <div>
-              <Label className="text-blue-700 font-semibold">HSN Number</Label>
-              <Input
-                value={editCurrentMedicine.hsn}
-                onChange={(e) =>
-                  setEditCurrentMedicine({
-                    ...editCurrentMedicine,
-                    hsn: e.target.value,
-                  })
-                }
-                placeholder="Enter HSN number"
-                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-              />
-            </div>
-
-            {/* Expiry Date */}
-            <div>
-              <Label className="text-blue-700 font-semibold">Expiry Date</Label>
-              <Input
-                type="date"
-                value={editCurrentMedicine.expiry}
-                onChange={(e) =>
-                  setEditCurrentMedicine({
-                    ...editCurrentMedicine,
-                    expiry: e.target.value,
-                  })
-                }
-                placeholder="dd-mm-yyyy"
-                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-              />
-            </div>
-
-            {/* Price per Unit */}
-            <div>
-              <Label className="text-blue-700 font-semibold">
-                Price per Unit (₹) *
-              </Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={editCurrentMedicine.pricePerUnit}
-                onChange={(e) =>
-                  setEditCurrentMedicine({
-                    ...editCurrentMedicine,
-                    pricePerUnit: e.target.value,
-                  })
-                }
-                placeholder="Enter price per unit"
-                min="0.01"
-                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-              />
-            </div>
-
-            {/* Quantity */}
-            <div>
-              <Label className="text-blue-700 font-semibold">Quantity *</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={editCurrentMedicine.quantity}
-                onChange={(e) =>
-                  setEditCurrentMedicine({
-                    ...editCurrentMedicine,
-                    quantity: e.target.value,
-                  })
-                }
-                placeholder="Enter quantity"
-                min="0.01"
-                className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-              />
-            </div>
-
-            {/* Add Medicine Button */}
-            <div className="flex items-end">
-              <Button
-                onClick={addMedicineToEditSale}
-                className="w-full bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white font-bold py-3 rounded-2xl"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Medicine
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {/* Total Calculation */}
-        {editSale.medicines.length > 0 && (
-          <div className="bg-blue-100 p-4 rounded-2xl border-2 border-blue-300">
-            <h3 className="text-lg font-bold text-blue-800 mb-3">
-              Bill Summary
-            </h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span>Subtotal:</span>
-                <span>₹{calculateEditSaleTotal().subtotal.toFixed(2)}</span>
-              </div>
-              {editSale.discount && (
-                <div className="flex justify-between">
-                  <span>Discount ({editSale.discount}%):</span>
-                  <span>
-                    - ₹{calculateEditSaleTotal().discountAmount.toFixed(2)}
-                  </span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span>SGST (2.5%):</span>
-                <span>₹{calculateEditSaleTotal().sgst.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>CGST (2.5%):</span>
-                <span>₹{calculateEditSaleTotal().cgst.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Roundoff:</span>
-                <span>₹{calculateEditSaleTotal().roundoff.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between font-bold text-lg border-t border-blue-400 pt-2">
-                <span>Grand Total:</span>
-                <span>₹{calculateEditSaleTotal().totalAmount.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Discount Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <Label className="text-blue-700 font-semibold">Discount (%)</Label>
-            <Input
-              type="number"
-              value={editSale.discount || ""}
-              onChange={(e) =>
-                setEditSale({ ...editSale, discount: e.target.value })
-              }
-              placeholder="Enter discount percentage"
-              min="0"
-              max="100"
-              className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-            />
-          </div>
-          <div>
-            <Label className="text-blue-700 font-semibold">Approved By</Label>
-            <Input
-              value={editSale.discountApprovedBy || ""}
-              onChange={(e) =>
-                setEditSale({
-                  ...editSale,
-                  discountApprovedBy: e.target.value,
-                })
-              }
-              placeholder="Enter approver's name"
-              className="border-blue-200 focus:border-blue-400 focus:ring-blue-200"
-            />
-          </div>
-        </div>
-
-        <div className="flex space-x-2 pt-4">
-          <Button
-            onClick={handleUpdateSale}
-            className="flex-1 bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white font-bold py-3 rounded-2xl"
-          >
-            Update Sale
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              setIsEditingSale(false);
-              setEditingSaleId(null);
-              setEditSale({
-                patientId: "",
-                patientName: "",
-                medicines: [],
-                saleDate: "",
-                discount: "",
-                discountApprovedBy: "",
+        // Others
+        if (Array.isArray(v.balance.others)) {
+          for (const o of v.balance.others) {
+            if (Number(o.balance) > 0) {
+              rows.push({
+                ...base,
+                purpose: `Others - ${o.purpose}`,
+                amount: o.balance,
               });
-              setEditCurrentMedicine({
-                medicineName: "",
-                batch: "",
-                hsn: "",
-                expiry: "",
-                pricePerUnit: "",
-                quantity: "",
-              });
-            }}
-            className="flex-1 border-blue-300 text-blue-600 hover:bg-blue-50 font-bold py-3 rounded-2xl"
-          >
-            Cancel
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  </div>
-)}
+            }
+          }
+        }
+      }
+    }
 
+    // 🔥 Excel generation (fast batch insert)
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Balance Report");
 
-      </div>
-    </div>
-  );
+    worksheet.columns = [
+      { header: "ID No.", key: "idno", width: 15 },
+      { header: "Name", key: "name", width: 25 },
+      { header: "Mobile", key: "phone", width: 15 },
+      { header: "Purpose", key: "purpose", width: 30 },
+      { header: "Balance Amount", key: "amount", width: 18 },
+      { header: "Sponsor", key: "sponsor", width: 25 }, // ✅ ADD THIS
+      { header: "Date", key: "date", width: 15 },
+    ];
+
+    // Add all rows at once (VERY FAST)
+    worksheet.addRows(rows);
+
+    // Style header
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDD835" } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = {
+        top: { style: "thin" },
+        bottom: { style: "thin" },
+        left: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=Balance_Report.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error exporting balance report:", error);
+    res.status(500).json({
+      message: "Failed to export balance report",
+      error: error.message,
+    });
+  }
 };
 
-export default MedicineInventory;
+const exportSponsorReport = async (req, res) => {
+  try {
+    const { dateFrom, dateTo, sponsor } = req.query;
+
+    console.log("👥 Sponsor Report Request:", { dateFrom, dateTo, sponsor });
+
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ message: "Missing date range" });
+    }
+
+    // ✅ FIXED: Universal date parser
+    const parseDDMMYYYY = (str) => {
+      if (!str) return null;
+      
+      // Handle DD/MM/YYYY format
+      if (str.includes("/")) {
+        const [day, month, year] = str.split("/").map(Number);
+        return new Date(year, month - 1, day);
+      } 
+      // Handle YYYY-MM-DD format
+      else if (str.includes("-")) {
+        return new Date(str);
+      }
+      return null;
+    };
+
+    const fromDate = parseDDMMYYYY(dateFrom);
+    const toDate = parseDDMMYYYY(dateTo);
+    
+    if (!fromDate || !toDate || isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+    
+    fromDate.setHours(0, 0, 0, 0);
+    toDate.setHours(23, 59, 59, 999);
+
+    console.log("📅 Parsed Date Range:", { fromDate, toDate });
+    console.log("🏢 Looking for sponsor:", sponsor || "All sponsors");
+
+    // ✅ STEP 1: Fetch visits with optional sponsor filter
+    const visitFilter = {};
+    if (sponsor && sponsor.trim() !== "") {
+      // Case-insensitive partial match
+      visitFilter.sponsor = new RegExp(sponsor.trim(), "i");
+      console.log("🔍 Using sponsor filter:", visitFilter.sponsor);
+    }
+
+    const visits = await visitModel.find(visitFilter).lean();
+    console.log(`📦 Total visits from DB: ${visits.length}`);
+
+    // ✅ STEP 2: Filter visits by date range
+    const filteredVisits = visits.filter((visit) => {
+      if (!visit.date || !visit.patientId) {
+        console.log("⚠️ Visit missing date or patientId:", visit._id);
+        return false;
+      }
+      
+      const visitDate = parseDDMMYYYY(visit.date);
+      if (!visitDate || isNaN(visitDate.getTime())) {
+        console.log("⚠️ Invalid visit date:", visit.date);
+        return false;
+      }
+      
+      visitDate.setHours(0, 0, 0, 0);
+      const inRange = visitDate >= fromDate && visitDate <= toDate;
+      
+      if (!inRange) {
+        console.log(`❌ Visit ${visit._id} outside range: ${visit.date}`);
+      }
+      
+      return inRange;
+    });
+
+    console.log(`✅ Filtered visits: ${filteredVisits.length}`);
+
+    if (filteredVisits.length === 0) {
+      return res.status(404).json({
+        message: `No visits found for ${sponsor || "any sponsor"} between ${dateFrom} and ${dateTo}.`,
+      });
+    }
+
+    // ✅ STEP 3: Fetch only needed patients
+    const patientIds = [
+      ...new Set(filteredVisits.map(v => v.patientId.toString()))
+    ];
+
+    console.log(`👥 Fetching ${patientIds.length} unique patients`);
+
+    const patients = await patientModel
+      .find({ _id: { $in: patientIds } })
+      .lean();
+
+    const patientMap = new Map(
+      patients.map(p => [p._id.toString(), p])
+    );
+
+    console.log(`✅ Found ${patients.length} patients`);
+
+    // ✅ STEP 4: Generate Excel
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Sponsor Report");
+
+    worksheet.columns = [
+      { header: "ID No.", key: "idno", width: 15 },
+      { header: "Name", key: "name", width: 25 },
+      { header: "Gender", key: "gender", width: 10 },
+      { header: "Mobile", key: "phone", width: 15 },
+      { header: "City", key: "city", width: 15 },
+      { header: "Sponsor", key: "sponsor", width: 25 },
+      { header: "Date", key: "date", width: 15 },
+    ];
+
+    // Style header
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, size: 12 };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFB3E5FC" },
+      };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = {
+        top: { style: "thin" },
+        bottom: { style: "thin" },
+        left: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    // Add rows
+    filteredVisits.forEach((visit) => {
+      const patient = patientMap.get(visit.patientId.toString());
+      if (!patient) {
+        console.log("⚠️ Patient not found for visit:", visit._id);
+        return;
+      }
+
+      worksheet.addRow({
+        idno: patient.idno || "",
+        name: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
+        gender: patient.gender || "",
+        phone: patient.phone || "",
+        city: patient.city || "",
+        sponsor: visit.sponsor || "N/A",
+        date: visit.date,
+      });
+    });
+
+    // Center align all cells
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.eachCell((cell) => {
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
+        });
+      }
+    });
+
+    console.log("✅ Excel generated successfully");
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Sponsor_Report_${sponsor ? sponsor.replace(/\s+/g, '_') : 'All'}_${dateFrom}_to_${dateTo}.xlsx`
+    );
+    res.setHeader("Content-Length", buffer.length);
+
+    res.send(buffer);
+  } catch (err) {
+    console.error("❌ Sponsor report error:", err);
+    res.status(500).json({ 
+      message: "Failed to export sponsor report",
+      error: err.message 
+    });
+  }
+};
+
+const exportDiscountWiseReport = async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({
+        message: "Missing dateFrom or dateTo",
+      });
+    }
+
+    const parseDDMMYYYY = (str) => {
+      if (!str) return null;
+      if (str.includes("/")) {
+        const [day, month, year] = str.split("/").map(Number);
+        return new Date(year, month - 1, day);
+      } else if (str.includes("-")) {
+        return new Date(str);
+      }
+      return null;
+    };
+
+    const fromDate = parseDDMMYYYY(dateFrom);
+    const toDate = parseDDMMYYYY(dateTo);
+    fromDate.setHours(0, 0, 0, 0);
+    toDate.setHours(23, 59, 59, 999);
+
+    const visits = await visitModel.find({}).populate("patientId");
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Discount Report");
+
+    worksheet.columns = [
+      { header: "Patient ID", key: "idno", width: 15 },
+      { header: "Name", key: "name", width: 25 },
+      { header: "Mobile", key: "phone", width: 15 },
+      { header: "City", key: "city", width: 15 },
+      { header: "Visit Date", key: "date", width: 15 },
+      { header: "Discount Type", key: "type", width: 20 },
+      { header: "Discount %", key: "percentage", width: 12 },
+      { header: "Approved By", key: "approvedBy", width: 25 },
+    ];
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFB3E5FC" },
+      };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = {
+        top: { style: "thin" },
+        bottom: { style: "thin" },
+        left: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    for (const visit of visits) {
+      const patient = visit.patientId;
+      if (!patient || !visit.date || !visit.discounts) continue;
+
+      const visitDate = parseDDMMYYYY(visit.date);
+      if (!visitDate || visitDate < fromDate || visitDate > toDate) continue;
+
+      const { consultation, prakritiparikshan, others, therapies } =
+        visit.discounts;
+
+      const pushIfExists = (type, discount) => {
+        if (discount && discount.percentage > 0) {
+          const newRow = worksheet.addRow({
+            idno: patient.idno || "",
+            name: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
+            phone: `${patient.phone || ""}`,
+            city: patient.city || "",
+            date: visit.date || "",
+            type,
+            percentage: discount.percentage,
+            approvedBy: discount.approvedBy || "-",
+          });
+
+          newRow.getCell("phone").alignment = { horizontal: "left" };
+          newRow.getCell("percentage").alignment = { horizontal: "left" };
+        }
+      };
+
+      pushIfExists("Consultation", consultation);
+      pushIfExists("Prakriti Parikshan", prakritiparikshan);
+      pushIfExists("Others", others);
+
+      if (Array.isArray(therapies)) {
+        for (const therapy of therapies) {
+          if (therapy && therapy.percentage > 0) {
+            const newRow = worksheet.addRow({
+              idno: patient.idno || "",
+              name: `${patient.firstName || ""} ${
+                patient.lastName || ""
+              }`.trim(),
+              phone: `${patient.phone || ""}`,
+              city: patient.city || "",
+              date: visit.date || "",
+              type: `Therapy - ${therapy.name}`,
+              percentage: therapy.percentage,
+              approvedBy: therapy.approvedBy || "-",
+            });
+            newRow.getCell("phone").alignment = { horizontal: "left" };
+            newRow.getCell("percentage").alignment = { horizontal: "left" };
+          }
+        }
+      }
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+res.setHeader(
+  "Content-Type",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+);
+res.setHeader(
+  "Content-Disposition",
+  "attachment; filename=Discount_Report_All.xlsx"
+);
+res.setHeader('Content-Length', buffer.length);
+
+res.send(buffer);
+  } catch (error) {
+    console.error("Error exporting discount-wise report:", error);
+    res.status(500).json({
+      message: "Failed to export discount-wise report",
+      error: error.message,
+    });
+  }
+};
+
+const importBulkPatientData = async (req, res) => {
+  try {
+    const patientsData = req.body.data; // Expecting array
+
+    if (!Array.isArray(patientsData)) {
+      return res.status(400).json({ message: "Invalid input format. Expecting an array." });
+    }
+
+    for (const entry of patientsData) {
+      const {
+        firstName,
+        lastName,
+        gender,
+        age,
+        houseno,
+        city,
+        state,
+        district,
+        pin,
+        aadharnum,
+        phone,
+        email,
+        consultationamount = 0,
+        appointment,
+        date,
+      } = entry;
+
+      // Check if patient already exists
+      const patient = await patientModel.findOne({
+        firstName,
+        lastName,
+        phone,
+      });
+
+      let savedPatient = patient;
+
+      if (!patient) {
+        // Generate custom ID
+        const counter = await counterModel.findOneAndUpdate(
+          { name: "patient_id_counter" },
+          { $inc: { value: 1 } },
+          { new: true, upsert: true }
+        );
+        const nextId = counter.value;
+        const customId = `BD/N/C50/${nextId}`;
+
+        const patientData = {
+          idno: customId,
+          firstName,
+          lastName,
+          gender,
+          age,
+          houseno,
+          city,
+          state,
+          district,
+          pin,
+          phone,
+        };
+
+        if (email) patientData.email = email;
+        if (aadharnum) patientData.aadharnum = aadharnum;
+
+        savedPatient = new patientModel(patientData);
+        await savedPatient.save();
+      }
+
+      // Format date from "DD-MM-YYYY" to "DD/MM/YYYY"
+      let formattedDate = date;
+      if (typeof date === "string" && date.includes("-")) {
+        const parts = date.split("-");
+        if (parts.length === 3) {
+          formattedDate = `${parts[0]}/${parts[1]}/${parts[2]}`;
+        }
+      }
+
+      // Setup consultation discount
+      const discounts = {
+        consultation:
+          consultationamount === 500
+            ? { percentage: 0, approvedBy: "NONE" }
+            : { percentage: 100, approvedBy: "FREE OPD" },
+        prakritiparikshan: {},
+        therapies: [],
+        others: {},
+      };
+
+      // Create visit
+      const visit = new visitModel({
+        patientId: savedPatient._id,
+        date: formattedDate,
+        appointment,
+        consultationamount,
+        prakritiparikshanamount: 0,
+        therapies: [],
+        therapyWithAmount: [],
+        medicines: [],
+        others: "",
+        othersamount: 0,
+        observation: "",
+        status: "pending",
+        discounts,
+        rogParikshan: {
+          stool: "",
+          urine: "",
+          appetite: "",
+          sleep: "",
+          tongue: "",
+        },
+        nadiParikshaFindings: "",
+        knownCaseOf: "",
+        otherObservations: "",
+        balance: {
+          consultation: 0,
+          prakritiparikshan: 0,
+          therapies: [],
+          others: [],
+        },
+      });
+
+      await visit.save();
+    }
+
+    res.status(200).json({
+      status: 1,
+      message: "Bulk patient data imported successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 0,
+      message: "Error while importing data",
+      error: error.message,
+    });
+  }
+};
+
+
+// Replace the updatePatientDetails function in patientController.js
+
+const updatePatientDetails = async (req, res) => {
+  try {
+    const patientId = req.params.id;
+    const {
+      firstName,
+      lastName,
+      age,
+      gender,
+      maritalStatus,
+      occupation,
+      phone,
+      email,
+      aadharnum,
+      houseno,
+      city,
+      state,
+      district,
+      pin,
+      emergencyContactName,
+      emergencyContactPhone,
+    } = req.body;
+
+    console.log("Received update request:", req.body); // Debug log
+
+    // Validate required fields
+    if (!firstName || !age || !gender || !phone || !houseno || !city || !state || !district) {
+      return res.status(400).json({
+        status: 0,
+        message: "Missing required fields",
+      });
+    }
+
+    // Convert to numbers - handle both string and number inputs
+    const phoneNum = typeof phone === 'string' ? Number(phone) : phone;
+    const ageNum = typeof age === 'string' ? Number(age) : age;
+    const aadharNum = aadharnum && aadharnum !== 0 ? (typeof aadharnum === 'string' ? Number(aadharnum) : aadharnum) : null;
+    const pinNum = pin && pin !== 0 ? (typeof pin === 'string' ? Number(pin) : pin) : null;
+    const emergencyPhoneNum = emergencyContactPhone && emergencyContactPhone !== 0 
+      ? (typeof emergencyContactPhone === 'string' ? Number(emergencyContactPhone) : emergencyContactPhone) 
+      : null;
+
+    // Validate phone number (must be exactly 10 digits)
+    const phoneStr = phoneNum.toString();
+    if (phoneStr.length !== 10 || !/^\d{10}$/.test(phoneStr) || isNaN(phoneNum)) {
+      return res.status(400).json({
+        status: 0,
+        message: "Phone number must be exactly 10 digits",
+      });
+    }
+
+    // Validate Aadhar number if provided (must be exactly 12 digits)
+    if (aadharNum && aadharNum !== 0) {
+      const aadharStr = aadharNum.toString();
+      if (aadharStr.length !== 12 || !/^\d{12}$/.test(aadharStr) || isNaN(aadharNum)) {
+        return res.status(400).json({
+          status: 0,
+          message: "Aadhar number must be exactly 12 digits",
+        });
+      }
+    }
+
+    // Validate PIN code if provided (must be exactly 6 digits)
+    if (pinNum && pinNum !== 0) {
+      const pinStr = pinNum.toString();
+      if (pinStr.length !== 6 || !/^\d{6}$/.test(pinStr) || isNaN(pinNum)) {
+        return res.status(400).json({
+          status: 0,
+          message: "PIN code must be exactly 6 digits",
+        });
+      }
+    }
+
+    // Validate emergency contact phone if provided (must be exactly 10 digits)
+    if (emergencyPhoneNum && emergencyPhoneNum !== 0) {
+      const emergencyPhoneStr = emergencyPhoneNum.toString();
+      if (emergencyPhoneStr.length !== 10 || !/^\d{10}$/.test(emergencyPhoneStr) || isNaN(emergencyPhoneNum)) {
+        return res.status(400).json({
+          status: 0,
+          message: "Emergency contact phone must be exactly 10 digits",
+        });
+      }
+    }
+
+    // Find the patient
+    const patient = await patientModel.findById(patientId);
+    if (!patient) {
+      return res.status(404).json({
+        status: 0,
+        message: "Patient not found",
+      });
+    }
+
+    // Build update object with only provided fields (store as numbers)
+    const updateData = {
+      firstName: firstName.trim(),
+      age: ageNum,
+      gender,
+      phone: phoneNum,
+      houseno: houseno.trim(),
+      city: city.trim(),
+      state: state.trim(),
+      district: district.trim(),
+    };
+
+    // Add optional fields if provided
+    if (lastName) updateData.lastName = lastName.trim();
+    if (maritalStatus) updateData.maritalStatus = maritalStatus;
+    if (occupation) updateData.occupation = occupation.trim();
+    if (email) updateData.email = email.trim();
+    if (aadharNum && aadharNum !== 0) updateData.aadharnum = aadharNum;
+    if (pinNum && pinNum !== 0) updateData.pin = pinNum;
+    if (emergencyContactName) updateData.emergencyContactName = emergencyContactName.trim();
+    if (emergencyPhoneNum && emergencyPhoneNum !== 0) updateData.emergencyContactPhone = emergencyPhoneNum;
+
+    console.log("Update data:", updateData); // Debug log
+
+    // Update the patient
+    const updatedPatient = await patientModel.findByIdAndUpdate(
+      patientId,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    console.log("Updated patient:", updatedPatient); // Debug log
+
+    return res.status(200).json({
+      status: 1,
+      message: "Patient details updated successfully",
+      patient: updatedPatient,
+    });
+  } catch (err) {
+    console.error("Error updating patient:", err);
+    return res.status(500).json({
+      status: 0,
+      message: "Error updating patient details",
+      error: err.message,
+    });
+  }
+};
+
+const getTherapyPatients = async (req, res) => {
+  try {
+    const results = await patientModel.aggregate([
+      {
+        $lookup: {
+          from: "visits",
+          localField: "_id",
+          foreignField: "patientId",
+          as: "visits",
+        },
+      },
+      { $unwind: { path: "$visits", preserveNullAndEmptyArrays: false } },
+      { $match: { "visits.therapyBills.0": { $exists: true } } },
+      { $unwind: { path: "$visits.therapyBills", preserveNullAndEmptyArrays: false } },
+      { $match: { "visits.therapyBills.therapies.0": { $exists: true } } },
+      {
+        $project: {
+          _id: 1,
+          idno: 1,
+          firstName: 1,
+          lastName: 1,
+          age: 1,
+          gender: 1,
+          phone: 1,
+          email: 1,
+          city: 1,
+          state: 1,
+          date:              "$visits.date",
+          visitCreatedAt:    "$visits.createdAt",
+          appointment:       "$visits.appointment",
+          department:        "$visits.department",
+          sponsor:           "$visits.sponsor",
+          visitId:           "$visits._id",
+          billNumber:        "$visits.therapyBills.billNumber",
+          billDate:          "$visits.therapyBills.billDate",
+          billTherapies:     "$visits.therapyBills.therapies",
+          therapyWithAmount: "$visits.therapyWithAmount",
+          visitTherapies:    "$visits.therapies",
+          visitDiscounts:    "$visits.discounts.therapies",   // [{ name, percentage }]
+        },
+      },
+      { $sort: { visitCreatedAt: -1 } },
+    ], { allowDiskUse: true });
+
+    // ── Resolve DISCOUNTED amount for a therapy name ──────────────
+    // Same 4-tier lookup as the therapy report, but applies discount on top.
+    // discounts.therapies = [{ name, percentage, approvedBy }]
+    const resolveAmount = (tName, therapyWithAmount, visitTherapies, visitDiscounts) => {
+      const cleanName = tName.trim().toLowerCase();
+      const twaList = therapyWithAmount || [];
+      const therapiesList = visitTherapies || [];
+      const discountList = visitDiscounts || [];
+
+      // Find matching discount for this therapy
+      const discountEntry = discountList.find(
+        (d) => d.name?.trim().toLowerCase() === cleanName
+      );
+      const discountPct = discountEntry ? Number(discountEntry.percentage) || 0 : 0;
+
+      const applyDiscount = (baseAmount) => {
+        if (discountPct <= 0) return baseAmount;
+        return Math.round(baseAmount * (1 - discountPct / 100));
+      };
+
+      // Tier 1: Exact match on therapyWithAmount[].receivedAmount
+      const exact = twaList.find(
+        (t) => t.name?.trim().toLowerCase() === cleanName && Number(t.receivedAmount) > 0
+      );
+      if (exact) return applyDiscount(Number(exact.receivedAmount));
+
+      // Tier 2: StartsWith — "Sarvanga Udwartan (1 session)"
+      const startsWith = twaList.find(
+        (t) => t.name?.trim().toLowerCase().startsWith(cleanName) && Number(t.receivedAmount) > 0
+      );
+      if (startsWith) return applyDiscount(Number(startsWith.receivedAmount));
+
+      // Tier 3: Contains — combined strings
+      const contains = twaList.find(
+        (t) => t.name?.trim().toLowerCase().includes(cleanName) && Number(t.receivedAmount) > 0
+      );
+      if (contains) return applyDiscount(Number(contains.receivedAmount));
+
+      // Tier 4: therapies[].amount
+      const fromTherapies = therapiesList.find(
+        (t) => t.name?.trim().toLowerCase() === cleanName
+      );
+      if (fromTherapies && Number(fromTherapies.amount) > 0) {
+        return applyDiscount(Number(fromTherapies.amount));
+      }
+
+      return 0;
+    };
+
+    // ── One card per bill ─────────────────────────────────────────
+    const cards = results.map((record) => {
+      const therapies = (record.billTherapies || []).filter((t) => t && t.trim() !== "");
+      const totalAmount = therapies.reduce(
+        (sum, tName) => sum + resolveAmount(tName, record.therapyWithAmount, record.visitTherapies, record.visitDiscounts),
+        0
+      );
+      return {
+        _id:           record._id,
+        idno:          record.idno,
+        firstName:     record.firstName,
+        lastName:      record.lastName,
+        age:           record.age,
+        gender:        record.gender,
+        phone:         record.phone,
+        email:         record.email,
+        city:          record.city,
+        state:         record.state,
+        date:          record.billDate || record.date,
+        appointment:   record.appointment,
+        department:    record.department,
+        sponsor:       record.sponsor,
+        visitId:       record.visitId,
+        billNumber:    record.billNumber,
+        therapynames:  therapies,
+        therapyname:   therapies.join(", "),
+        therapyamount: totalAmount,
+      };
+    });
+
+    res.status(200).json({ status: 1, data: cards });
+  } catch (err) {
+    console.error("Error fetching therapy patients:", err);
+    res.status(500).json({
+      status: 0,
+      message: "Error fetching therapy patients",
+      error: err.message,
+    });
+  }
+};
+
+
+// ============================================================
+// REPLACE deleteTherapyFromVisit in patientController.js
+// Find it at line ~3977 and replace the entire function
+// ============================================================
+//
+// BUG CAUSING "Therapy not found in this visit" ERROR:
+//   Line 3997 checks visit.therapies[] to verify therapy exists.
+//   Old visits have therapies: [] (empty array) — their therapy
+//   data is only in therapyBills[].therapies and therapyWithAmount[].
+//   So the existence check always fails for old visits → 404 error.
+//
+// ALSO FIXED:
+//   therapyWithAmount filter used exact match only.
+//   Some entries have "(1 session)" suffix so exact match misses them.
+//   Fixed with startsWith + contains matching.
+//
+// ============================================================
+
+const deleteTherapyFromVisit = async (req, res) => {
+  try {
+    const { visitId } = req.params;
+    const { billNumber } = req.body;
+
+    if (!visitId || !billNumber) {
+      return res.status(400).json({
+        status: 0,
+        message: "visitId and billNumber are required",
+      });
+    }
+
+    const visit = await visitModel.findById(visitId);
+    if (!visit) {
+      return res.status(404).json({ status: 0, message: "Visit not found" });
+    }
+
+    // Find the bill entry to delete
+    const billEntry = (visit.therapyBills || []).find(
+      (b) => b.billNumber === billNumber
+    );
+
+    if (!billEntry) {
+      return res.status(404).json({
+        status: 0,
+        message: `Bill "${billNumber}" not found in this visit`,
+      });
+    }
+
+    // Get the therapy names from this bill so we can clean up related arrays
+    const billTherapyNames = (billEntry.therapies || []).map((t) =>
+      t?.trim().toLowerCase()
+    );
+
+    // ── 1. Remove this bill from therapyBills[] ───────────────
+    visit.therapyBills = visit.therapyBills.filter(
+      (b) => b.billNumber !== billNumber
+    );
+    visit.markModified("therapyBills");
+
+    // ── 2. Remove matching entries from therapyWithAmount[] ───
+    // Only remove entries whose names match therapies on this specific bill
+    if (visit.therapyWithAmount && visit.therapyWithAmount.length > 0) {
+      visit.therapyWithAmount = visit.therapyWithAmount.filter((t) => {
+        const tLower = t.name?.trim().toLowerCase() || "";
+        return !billTherapyNames.some(
+          (bName) =>
+            tLower === bName ||
+            tLower.startsWith(bName) ||
+            tLower.includes(bName)
+        );
+      });
+    }
+
+    // ── 3. Remove matching entries from therapies[] ───────────
+    if (visit.therapies && visit.therapies.length > 0) {
+      visit.therapies = visit.therapies.filter(
+        (t) => !billTherapyNames.includes(t.name?.trim().toLowerCase())
+      );
+    }
+
+    // ── 4. Remove matching entries from discounts.therapies[] ─
+    if (visit.discounts?.therapies && visit.discounts.therapies.length > 0) {
+      visit.discounts.therapies = visit.discounts.therapies.filter(
+        (t) => !billTherapyNames.includes(t.name?.trim().toLowerCase())
+      );
+      visit.markModified("discounts");
+    }
+
+    await visit.save();
+
+    console.log(
+      `✅ Bill "${billNumber}" deleted from visit ${visitId}.` +
+      ` therapyBills[]: ${visit.therapyBills?.length ?? 0},` +
+      ` therapyWithAmount[]: ${visit.therapyWithAmount?.length ?? 0}`
+    );
+
+    res.status(200).json({
+      status: 1,
+      message: `Bill "${billNumber}" deleted successfully`,
+    });
+  } catch (error) {
+    console.error("❌ Error deleting bill:", error);
+    res.status(500).json({
+      status: 0,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+};
+
+
+module.exports = {
+  patientDetailsInsert,
+  patientList,
+  getLastPatient,
+  exportLastPatientToExcel,
+  exportPrescriptionFormToExcel,
+  exportTherapyCashReceipt,
+  exportPrakritiCashReceipt,
+  exportPatientMaster,
+  updatePrakritiAmount,
+  updateTherapy,
+  exportPatientBillingMaster,
+  exportRevenueReport,
+  addVisit,
+  getVisitsByPatientId,
+  getLastVisit,
+  exportMedicineStock,
+  exportLowStock,
+  exportPrakritiParikshanPatients,
+  exportConsultationPatients,
+  exportPatientsBySpeciality,
+  exportTherapyReport,
+  updateVisitPurposeWithAmount,
+  exportPatientBillingById,
+  prescriptionDone,
+  exportBalanceReport,
+  exportSponsorReport,
+  exportDiscountWiseReport,
+  importBulkPatientData,
+  getTherapyPatients,
+  deleteTherapyFromVisit,
+  updatePatientDetails
+};
