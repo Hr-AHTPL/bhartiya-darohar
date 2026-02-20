@@ -143,8 +143,8 @@ const Therapies = () => {
   });
 
   // Delete a single therapy from a visit — admin only
-  const handleDeleteTherapy = async (visitId: string, therapyname: string) => {
-    setDeletingId(`${visitId}-${therapyname}`);
+  const handleDeleteTherapy = async (visitId: string, billNumber: string) => {
+    setDeletingId(`${visitId}-${billNumber}`);
     try {
       const token = localStorage.getItem("token");
       const response = await fetch(
@@ -155,7 +155,7 @@ const Therapies = () => {
             "Content-Type": "application/json",
             Authorization: token || "",
           },
-          body: JSON.stringify({ therapyname }),
+          body: JSON.stringify({ billNumber }),
         }
       );
       if (!response.ok) {
@@ -773,8 +773,8 @@ const filteredPatientRecords = records.filter((record) => {
                       Cancel
                     </Button>
                     <Button
-                      onClick={() => handleDeleteTherapy(confirmDelete.visitId, confirmDelete.therapyname)}
-                      disabled={deletingId === `${confirmDelete.visitId}-${confirmDelete.therapyname}`}
+                      onClick={() => handleDeleteTherapy(confirmDelete.visitId, confirmDelete.billNumber)}
+                      disabled={deletingId === `${confirmDelete.visitId}-${confirmDelete.billNumber}`}
                       className="flex-1 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold rounded-2xl"
                     >
                       {deletingId ? "Deleting..." : "Delete"}
@@ -802,7 +802,8 @@ const filteredPatientRecords = records.filter((record) => {
                         onClick={() =>
                           setConfirmDelete({
                             visitId: record.visitId || "",
-                            therapyname: record.therapyname || "",  // joined string of all therapies on this bill
+                            therapyname: record.therapyname || "",
+                            billNumber: record.billNumber || "",
                             patientName: `${record.firstName ?? ""} ${record.lastName ?? ""}`.trim(),
                           })
                         }
