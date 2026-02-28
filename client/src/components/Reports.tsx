@@ -664,15 +664,13 @@ const handleGenerate = async (type: string) => {
     }
   } else if (type === "Medicine Stock Report") {
     // Validate dates first
-    if (!fromDate || !toDate) {
-      // ✅ ADD VALIDATION TOAST
-      toast.error("Please select both from and to dates for stock report");
+    if (!stockType) {
+      toast.error("Please select a stock type (Running Stock, Low Stock, or Expiry Stock)");
       return;
     }
 
-    if (!stockType) {
-      // ✅ ADD VALIDATION TOAST
-      toast.error("Please select a stock type (Running Stock or Low Stock)");
+    if (stockType !== "Expiry Stock" && (!fromDate || !toDate)) {
+      toast.error("Please select both from and to dates for this stock report");
       return;
     }
 
@@ -751,6 +749,40 @@ const handleGenerate = async (type: string) => {
         console.error("Error downloading low stock report:", error);
         // ✅ ADD ERROR TOAST
         toast.error("Failed to generate Low Stock report");
+      }
+    } else if (stockType === "Expiry Stock") {
+      try {
+        const loadingToast = toast.loading("Generating Expiry Stock report...");
+
+        const response = await fetch(
+          `${API_BASE_URL}/api/website/enquiry/expiry-stock`,
+          { method: "GET" }
+        );
+
+        toast.dismiss(loadingToast);
+
+        if (!response.ok) throw new Error("Failed to fetch expiry stock report");
+
+        const blob = await response.blob();
+
+        if (blob.size === 0) {
+          toast.error("No data found for expiry stock report");
+          return;
+        }
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `ExpiryStock_${new Date().toISOString().split("T")[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+
+        toast.success("Expiry Stock report downloaded successfully!");
+      } catch (error) {
+        console.error("Error downloading expiry stock report:", error);
+        toast.error("Failed to generate Expiry Stock report");
       }
     }
   } else if (type === "Purchase Records") {
