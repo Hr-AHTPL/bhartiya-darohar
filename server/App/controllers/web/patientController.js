@@ -2357,6 +2357,127 @@ res.send(buffer);
   }
 };
 
+const exportExpiryStock = async (req, res) => {
+  try {
+    const medicines = await medicineModel.find();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Parse dd/mm/yyyy or yyyy-mm-dd or any date string
+    const parseExpiryDate = (str) => {
+      if (!str || str === 'N/A') return null;
+      if (str.includes('/')) {
+        const parts = str.split('/');
+        if (parts.length === 3) {
+          // dd/mm/yyyy
+          const [day, month, year] = parts.map(Number);
+          if (year > 1000) return new Date(year, month - 1, day);
+          // mm/yyyy (no day)
+          return new Date(parts[1], parts[0] - 1, 1);
+        }
+      }
+      const d = new Date(str);
+      return isNaN(d.getTime()) ? null : d;
+    };
+
+    // Sort: expired first, then expiring soon, then by expiry date asc, then no expiry at end
+    const getStatusAndDays = (med) => {
+      const expiryDate = parseExpiryDate(med.expiryDate);
+      if (!expiryDate) return { status: 'No Expiry Date', days: Infinity, color: null };
+      const diffDays = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+      if (diffDays < 0)        return { status: 'EXPIRED',                   days: diffDays,  color: 'FFFF9999' };
+      if (diffDays <= 30)      return { status: 'Expiring Soon (≤30 days)',  days: diffDays,  color: 'FFFFCC99' };
+      if (diffDays <= 90)      return { status: 'Expiring in 90 days',       days: diffDays,  color: 'FFFFFF99' };
+      return                          { status: 'OK',                         days: diffDays,  color: null };
+    };
+
+    const sortedList = medicines
+      .map(med => ({ med, ...getStatusAndDays(med) }))
+      .sort((a, b) => a.days - b.days);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Expiry Stock Report');
+
+    // Title row
+    worksheet.mergeCells('A1:H1');
+    const titleCell = worksheet.getCell('A1');
+    titleCell.value = 'Expiry Stock Report';
+    titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+    worksheet.getRow(1).height = 30;
+
+    // Generated date row
+    worksheet.mergeCells('A2:H2');
+    const dateCell = worksheet.getCell('A2');
+    dateCell.value = `Generated on: ${today.toLocaleDateString('en-IN')}`;
+    dateCell.font = { bold: true, size: 11 };
+    dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // Empty spacer row
+    worksheet.addRow([]);
+
+    // Column headers — row 4
+    worksheet.addRow(['Code', 'Product Name', 'Unit', 'Company', 'Batch No.', 'Expiry Date', 'Qty in Stock', 'Status']);
+    const headerRow = worksheet.getRow(4);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, size: 11 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF00' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = {
+        top: { style: 'thin' }, bottom: { style: 'thin' },
+        left: { style: 'thin' }, right: { style: 'thin' },
+      };
+    });
+    headerRow.height = 22;
+
+    // Column widths
+    worksheet.getColumn(1).width = 10;  // Code
+    worksheet.getColumn(2).width = 40;  // Product Name
+    worksheet.getColumn(3).width = 10;  // Unit
+    worksheet.getColumn(4).width = 22;  // Company
+    worksheet.getColumn(5).width = 15;  // Batch No.
+    worksheet.getColumn(6).width = 15;  // Expiry Date
+    worksheet.getColumn(7).width = 14;  // Qty in Stock
+    worksheet.getColumn(8).width = 24;  // Status
+
+    // Data rows
+    sortedList.forEach(({ med, status, color }) => {
+      const row = worksheet.addRow([
+        med.Code,
+        med['Product Name'],
+        med.Unit || 'N/A',
+        med.Company || 'N/A',
+        med.batchNumber || 'N/A',
+        med.expiryDate || 'N/A',
+        med.Quantity,
+        status,
+      ]);
+
+      row.eachCell((cell) => {
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = {
+          top: { style: 'thin' }, bottom: { style: 'thin' },
+          left: { style: 'thin' }, right: { style: 'thin' },
+        };
+        if (color) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+        }
+      });
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=ExpiryStockReport.xlsx');
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+
+  } catch (error) {
+    console.error('Error generating expiry stock report:', error.message);
+    res.status(500).json({ message: 'Failed to export expiry stock', error: error.message });
+  }
+};
+
 // OPTIMIZED VERSION - Replace exportPrakritiParikshanPatients function
 
 const exportPrakritiParikshanPatients = async (req, res) => {
@@ -4162,6 +4283,7 @@ module.exports = {
   getLastVisit,
   exportMedicineStock,
   exportLowStock,
+  exportExpiryStock,
   exportPrakritiParikshanPatients,
   exportConsultationPatients,
   exportPatientsBySpeciality,
