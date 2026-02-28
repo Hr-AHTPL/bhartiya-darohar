@@ -17,6 +17,7 @@ const {
   getLastVisit,
   exportMedicineStock,
   exportLowStock,
+  exportExpiryStock,
   exportPrakritiParikshanPatients,
   exportConsultationPatients,
   exportPatientsBySpeciality,
@@ -61,6 +62,7 @@ patientRouter.get("/current-stock", exportMedicineStock);
 patientRouter.get("/medicine-stock", exportMedicineStock);
 patientRouter.get("/low-stock", exportLowStock);
 patientRouter.get("/low-stock-report", exportLowStock);
+patientRouter.get("/expiry-stock", exportExpiryStock);
 
 patientRouter.get("/prakriti-analysis", exportPrakritiParikshanPatients);
 patientRouter.get("/consultation-analysis", exportConsultationPatients);
@@ -72,5 +74,6 @@ patientRouter.get("/balance-report", exportBalanceReport);
 patientRouter.get("/sponsor-report", exportSponsorReport);
 patientRouter.get("/discount-report", exportDiscountWiseReport);
 patientRouter.post("/import-bulk", importBulkPatientData);
+
 
 module.exports = patientRouter;
