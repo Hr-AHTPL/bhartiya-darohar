@@ -174,8 +174,9 @@ const generateExcelBill = async (saleId) => {
       }
 
       const afterDiscount = sale.subtotal - discountAmount;
-      const sgst = sale.sgst || (sale.subtotal * 0.025);
-      const cgst = sale.cgst || (sale.subtotal * 0.025);
+      // ✅ Always recalculate from afterDiscount — fixes old records that stored wrong values
+      const sgst = afterDiscount * 0.025;
+      const cgst = afterDiscount * 0.025;
 
       addTotalRow("SGST 2.5%:", `₹${sgst.toFixed(2)}`);
       addTotalRow("CGST 2.5%:", `₹${cgst.toFixed(2)}`);
@@ -287,10 +288,10 @@ const recordSale = async (req, res) => {
       subtotal += med.totalPrice;
     }
 
-    const sgst = subtotal * 0.025;
-    const cgst = subtotal * 0.025;
     const discountAmount = (subtotal * discount) / 100;
     const subtotalAfterDiscount = subtotal - discountAmount;
+    const sgst = subtotalAfterDiscount * 0.025;  // ✅ calculated AFTER discount
+    const cgst = subtotalAfterDiscount * 0.025;  // ✅ calculated AFTER discount
     const totalAmount = Math.round(subtotalAfterDiscount);
 
     const sale = new saleModel({
@@ -413,10 +414,10 @@ const updateSale = async (req, res) => {
     }
 
     // Calculate GST and totals
-    const sgst = subtotal * 0.025;
-    const cgst = subtotal * 0.025;
     const discountAmount = (subtotal * discount) / 100;
     const subtotalAfterDiscount = subtotal - discountAmount;
+    const sgst = subtotalAfterDiscount * 0.025;  // ✅ calculated AFTER discount
+    const cgst = subtotalAfterDiscount * 0.025;  // ✅ calculated AFTER discount
     const totalAmount = Math.round(subtotalAfterDiscount);
 
     // Update sale
