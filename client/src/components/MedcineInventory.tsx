@@ -795,8 +795,8 @@ const calculateEditSaleTotal = () => {
   );
   const discountAmount = (subtotal * (parseFloat(editSale.discount) || 0)) / 100;
   const subtotalAfterDiscount = subtotal - discountAmount;
-  const sgst = subtotal * 0.025;
-  const cgst = subtotal * 0.025;
+  const sgst = subtotalAfterDiscount * 0.025;
+  const cgst = subtotalAfterDiscount * 0.025;
   const totalBeforeRound = subtotalAfterDiscount;
   const totalAmount = Math.round(totalBeforeRound);
   const roundoff = totalAmount - totalBeforeRound;
@@ -1067,8 +1067,8 @@ const addMedicineToSale = () => {
   const subtotalAfterDiscount = subtotal - discountAmount;
 
   // GST calculated but not added to total
-  const sgst = subtotal * 0.025;
-  const cgst = subtotal * 0.025;
+  const sgst = subtotalAfterDiscount * 0.025;
+  const cgst = subtotalAfterDiscount * 0.025;
 
   const totalAmount = Math.round(subtotalAfterDiscount);
   const roundoff = totalAmount - subtotalAfterDiscount;
@@ -1267,8 +1267,8 @@ if (discountPercent > 0) {
 }
 
 const afterDiscount = sale.subtotal - discountAmount;
-const sgst = sale.subtotal * 0.025;
-const cgst = sale.subtotal * 0.025;
+const sgst = afterDiscount * 0.025;
+const cgst = afterDiscount * 0.025;
 
 addTotalRow("SGST 2.5%:", `₹${sgst.toFixed(2)}`);
 addTotalRow("CGST 2.5%:", `₹${cgst.toFixed(2)}`);
