@@ -174,17 +174,20 @@ const generateExcelBill = async (saleId) => {
       }
 
       const afterDiscount = sale.subtotal - discountAmount;
-      // ✅ Always recalculate from afterDiscount — fixes old records that stored wrong values
-      const sgst = afterDiscount * 0.025;
-      const cgst = afterDiscount * 0.025;
+      // GST is INCLUSIVE — back-calculate taxable amount
+      const taxableAmount = (afterDiscount * 100) / 105;
+      const sgst = taxableAmount * 0.025;   // 2.5% of taxable
+      const cgst = taxableAmount * 0.025;   // 2.5% of taxable
 
+      // Always show Taxable Amount row
+      addTotalRow("Taxable Amount:", taxableAmount.toFixed(2));
       addTotalRow("SGST 2.5%:", `₹${sgst.toFixed(2)}`);
       addTotalRow("CGST 2.5%:", `₹${cgst.toFixed(2)}`);
 
-      const roundoff = sale.totalAmount - afterDiscount;
+      const roundoff = Math.round(afterDiscount) - afterDiscount;
       addTotalRow("Roundoff:", `₹${roundoff.toFixed(2)}`);
 
-      addTotalRow("GRAND TOTAL:", `₹${sale.totalAmount.toFixed(2)}`);
+      addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
 
       // -------------------- Social Media Links (Bottom Left) --------------------
       rowIdx += 2; // Add spacing
@@ -289,10 +292,13 @@ const recordSale = async (req, res) => {
     }
 
     const discountAmount = (subtotal * discount) / 100;
-    const subtotalAfterDiscount = subtotal - discountAmount;
-    const sgst = subtotalAfterDiscount * 0.025;  // ✅ calculated AFTER discount
-    const cgst = subtotalAfterDiscount * 0.025;  // ✅ calculated AFTER discount
-    const totalAmount = Math.round(subtotalAfterDiscount);
+    const afterDiscount = subtotal - discountAmount;
+    // GST is INCLUSIVE — back-calculate taxable amount from the discounted price
+    // Formula: taxableAmount = (afterDiscount * 100) / 105
+    const taxableAmount = (afterDiscount * 100) / 105;
+    const sgst = taxableAmount * 0.025;   // 2.5% of taxable
+    const cgst = taxableAmount * 0.025;   // 2.5% of taxable
+    const totalAmount = Math.round(afterDiscount); // grand total = afterDiscount (GST already included)
 
     const sale = new saleModel({
       billNumber,
@@ -415,10 +421,12 @@ const updateSale = async (req, res) => {
 
     // Calculate GST and totals
     const discountAmount = (subtotal * discount) / 100;
-    const subtotalAfterDiscount = subtotal - discountAmount;
-    const sgst = subtotalAfterDiscount * 0.025;  // ✅ calculated AFTER discount
-    const cgst = subtotalAfterDiscount * 0.025;  // ✅ calculated AFTER discount
-    const totalAmount = Math.round(subtotalAfterDiscount);
+    const afterDiscount = subtotal - discountAmount;
+    // GST is INCLUSIVE — back-calculate taxable amount from the discounted price
+    const taxableAmount = (afterDiscount * 100) / 105;
+    const sgst = taxableAmount * 0.025;   // 2.5% of taxable
+    const cgst = taxableAmount * 0.025;   // 2.5% of taxable
+    const totalAmount = Math.round(afterDiscount); // grand total = afterDiscount (GST already included)
 
     // Update sale
     existingSale.patientId = patientId;
