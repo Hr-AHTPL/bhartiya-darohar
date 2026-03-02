@@ -794,16 +794,20 @@ const calculateEditSaleTotal = () => {
     0
   );
   const discountAmount = (subtotal * (parseFloat(editSale.discount) || 0)) / 100;
-  const subtotalAfterDiscount = subtotal - discountAmount;
-  const sgst = subtotalAfterDiscount * 0.025;
-  const cgst = subtotalAfterDiscount * 0.025;
-  const totalBeforeRound = subtotalAfterDiscount;
-  const totalAmount = Math.round(totalBeforeRound);
-  const roundoff = totalAmount - totalBeforeRound;
+  const afterDiscount = subtotal - discountAmount;
+
+  // GST is INCLUSIVE — back-calculate taxable amount
+  const taxableAmount = (afterDiscount * 100) / 105;
+  const sgst = taxableAmount * 0.025;
+  const cgst = taxableAmount * 0.025;
+
+  const totalAmount = Math.round(afterDiscount);
+  const roundoff = totalAmount - afterDiscount;
 
   return {
     subtotal,
     discountAmount,
+    taxableAmount,
     sgst,
     cgst,
     roundoff,
@@ -1064,16 +1068,18 @@ const addMedicineToSale = () => {
       : 0;
 
   const discountAmount = (subtotal * discountPercent) / 100;
-  const subtotalAfterDiscount = subtotal - discountAmount;
+  const afterDiscount = subtotal - discountAmount;
 
-  // GST calculated but not added to total
-  const sgst = subtotalAfterDiscount * 0.025;
-  const cgst = subtotalAfterDiscount * 0.025;
+  // GST is INCLUSIVE — back-calculate taxable amount
+  // taxableAmount = (afterDiscount * 100) / 105
+  const taxableAmount = (afterDiscount * 100) / 105;
+  const sgst = taxableAmount * 0.025;  // 2.5% of taxable
+  const cgst = taxableAmount * 0.025;  // 2.5% of taxable
 
-  const totalAmount = Math.round(subtotalAfterDiscount);
-  const roundoff = totalAmount - subtotalAfterDiscount;
+  const totalAmount = Math.round(afterDiscount); // grand total = afterDiscount (GST inclusive)
+  const roundoff = totalAmount - afterDiscount;
 
-  return { subtotal, discountAmount, sgst, cgst, totalAmount, roundoff };
+  return { subtotal, discountAmount, taxableAmount, sgst, cgst, totalAmount, roundoff };
 };
 
   const [enquiryList, setEnquiryList] = useState([]);
@@ -1267,9 +1273,12 @@ if (discountPercent > 0) {
 }
 
 const afterDiscount = sale.subtotal - discountAmount;
-const sgst = afterDiscount * 0.025;
-const cgst = afterDiscount * 0.025;
+// GST is INCLUSIVE — back-calculate taxable amount
+const taxableAmount = (afterDiscount * 100) / 105;
+const sgst = taxableAmount * 0.025;
+const cgst = taxableAmount * 0.025;
 
+addTotalRow("Taxable Amount:", taxableAmount.toFixed(2));
 addTotalRow("SGST 2.5%:", `₹${sgst.toFixed(2)}`);
 addTotalRow("CGST 2.5%:", `₹${cgst.toFixed(2)}`);
 
@@ -1347,7 +1356,7 @@ const handleRecordSale = async () => {
     newSale.patientName &&
     newSale.medicines.length > 0
   ) {
-    const { subtotal, sgst, cgst, totalAmount } = calculateSaleTotal();
+    const { subtotal, taxableAmount, sgst, cgst, totalAmount } = calculateSaleTotal();
 
     const sale = {
       patientId: newSale.patientId,
@@ -2624,6 +2633,10 @@ const handleRecordSale = async () => {
     </div>
   )}
   <div className="flex justify-between">
+    <span>Taxable Amount:</span>
+    <span>₹{calculateSaleTotal().taxableAmount.toFixed(2)}</span>
+  </div>
+  <div className="flex justify-between">
     <span>SGST (2.5%):</span>
     <span>₹{calculateSaleTotal().sgst.toFixed(2)}</span>
   </div>
@@ -3032,6 +3045,10 @@ const handleRecordSale = async () => {
                   </span>
                 </div>
               )}
+              <div className="flex justify-between">
+                <span>Taxable Amount:</span>
+                <span>₹{calculateEditSaleTotal().taxableAmount.toFixed(2)}</span>
+              </div>
               <div className="flex justify-between">
                 <span>SGST (2.5%):</span>
                 <span>₹{calculateEditSaleTotal().sgst.toFixed(2)}</span>
