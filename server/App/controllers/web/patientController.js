@@ -1430,6 +1430,10 @@ const exportPatientBillingMaster = async (req, res) => {
           prakritiparikshanamount: "$visits.prakritiparikshanamount",
           therapyWithAmount: "$visits.therapyWithAmount",
           sponsor: "$visits.sponsor",
+          consultationDiscount: "$visits.discounts.consultation",
+          consultationBalance: "$visits.balance.consultation",
+          prakritiDiscount: "$visits.discounts.prakritiparikshan",
+          prakritiBalance: "$visits.balance.prakritiparikshan",
         },
       },
     ]);
@@ -1484,8 +1488,17 @@ const exportPatientBillingMaster = async (req, res) => {
 
     // Prepare rows
     const rows = filteredData.map((record) => {
-      const consultation = Number(record.consultationamount) || 0;
-      const prakriti = Number(record.prakritiparikshanamount) || 0;
+      const consultationGross = Number(record.consultationamount) || 0;
+      const consultationDiscountPct = Number(record.consultationDiscount?.percentage) || 0;
+      const consultationDiscountAmt = (consultationGross * consultationDiscountPct) / 100;
+      const consultationBalance = Number(record.consultationBalance) || 0;
+      const consultation = consultationGross - consultationDiscountAmt - consultationBalance;
+
+      const prakritiGross = Number(record.prakritiparikshanamount) || 0;
+      const prakritiDiscountPct = Number(record.prakritiDiscount?.percentage) || 0;
+      const prakritiDiscountAmt = (prakritiGross * prakritiDiscountPct) / 100;
+      const prakritiBalance = Number(record.prakritiBalance) || 0;
+      const prakriti = prakritiGross - prakritiDiscountAmt - prakritiBalance;
 
       const therapyWithAmountArray = Array.isArray(record.therapyWithAmount)
         ? record.therapyWithAmount
@@ -2526,6 +2539,8 @@ const exportPrakritiParikshanPatients = async (req, res) => {
           visitDate: "$visits.date",
           prakritiparikshanamount: "$visits.prakritiparikshanamount",
           prakritiBillNumber: "$visits.prakritiBillNumber",
+          prakritiDiscount: "$visits.discounts.prakritiparikshan",
+          prakritiBalance: "$visits.balance.prakritiparikshan",
         },
       },
     ]);
@@ -2575,17 +2590,25 @@ const exportPrakritiParikshanPatients = async (req, res) => {
     });
 
     // Prepare rows
-    const rows = filteredData.map((record) => ({
-      idno: record.idno || "",
-      billNumber: record.prakritiBillNumber || "N/A",
-      name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
-      age: record.age || "",
-      gender: record.gender || "",
-      phone: record.phone || "",
-      aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
-      prakritiparikshanamount: Number(record.prakritiparikshanamount),
-      date: record.visitDate,
-    }));
+    const rows = filteredData.map((record) => {
+      const grossFee = Number(record.prakritiparikshanamount) || 0;
+      const discountPct = Number(record.prakritiDiscount?.percentage) || 0;
+      const discountAmt = (grossFee * discountPct) / 100;
+      const balance = Number(record.prakritiBalance) || 0;
+      const receivedAmount = grossFee - discountAmt - balance;
+
+      return {
+        idno: record.idno || "",
+        billNumber: record.prakritiBillNumber || "N/A",
+        name: `${record.firstName || ""} ${record.lastName || ""}`.trim(),
+        age: record.age || "",
+        gender: record.gender || "",
+        phone: record.phone || "",
+        aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
+        prakritiparikshanamount: receivedAmount,
+        date: record.visitDate,
+      };
+    });
 
     worksheet.addRows(rows);
 
@@ -2658,6 +2681,8 @@ const exportConsultationPatients = async (req, res) => {
           visitDate: "$visits.date",
           consultationamount: "$visits.consultationamount",
           consultationBillNumber: "$visits.consultationBillNumber",
+          consultationDiscount: "$visits.discounts.consultation",
+          consultationBalance: "$visits.balance.consultation",
         },
       },
     ]);
@@ -2708,6 +2733,12 @@ const exportConsultationPatients = async (req, res) => {
 
     // Prepare and add rows
     const rows = filteredData.map((record) => {
+      const grossFee = Number(record.consultationamount) || 0;
+      const discountPct = Number(record.consultationDiscount?.percentage) || 0;
+      const discountAmt = (grossFee * discountPct) / 100;
+      const balance = Number(record.consultationBalance) || 0;
+      const receivedAmount = grossFee - discountAmt - balance;
+
       const row = {
         idno: record.idno || "",
         billNumber: record.consultationBillNumber || "N/A",
@@ -2716,7 +2747,7 @@ const exportConsultationPatients = async (req, res) => {
         gender: record.gender || "",
         phone: record.phone || "",
         aadharnum: `${record.aadharnum?.toString().padStart(12, "0")}` || "",
-        consultationamount: Number(record.consultationamount),
+        consultationamount: receivedAmount,
         date: record.visitDate,
       };
       return row;
