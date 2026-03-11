@@ -1792,11 +1792,25 @@ const exportRevenueReport = async (req, res) => {
         visitDate.setHours(0, 0, 0, 0);
         if (visitDate < fromDate || visitDate > toDate) return;
 
-        const consultationAmount = Number(visit.consultationamount || 0);
-        if (consultationAmount > 0) { consultationSum += consultationAmount; consultationCount++; }
+        const consultationGross = Number(visit.consultationamount || 0);
+        if (consultationGross > 0) {
+          const consultationDiscountPct = Number(visit.discounts?.consultation?.percentage) || 0;
+          const consultationDiscountAmt = (consultationGross * consultationDiscountPct) / 100;
+          const consultationBalance = Number(visit.balance?.consultation) || 0;
+          const consultationReceived = consultationGross - consultationDiscountAmt - consultationBalance;
+          consultationSum += consultationReceived;
+          consultationCount++;
+        }
 
-        const prakritiAmount = Number(visit.prakritiparikshanamount || 0);
-        if (prakritiAmount > 0) { otherServicesSum += prakritiAmount; prakritiCount++; }
+        const prakritiGross = Number(visit.prakritiparikshanamount || 0);
+        if (prakritiGross > 0) {
+          const prakritiDiscountPct = Number(visit.discounts?.prakritiparikshan?.percentage) || 0;
+          const prakritiDiscountAmt = (prakritiGross * prakritiDiscountPct) / 100;
+          const prakritiBalance = Number(visit.balance?.prakritiparikshan) || 0;
+          const prakritiReceived = prakritiGross - prakritiDiscountAmt - prakritiBalance;
+          otherServicesSum += prakritiReceived;
+          prakritiCount++;
+        }
 
         // PATH B — Old visits (no therapyBills[]): amounts in therapyWithAmount[].receivedAmount
         if (!Array.isArray(visit.therapyBills) || visit.therapyBills.length === 0) {
