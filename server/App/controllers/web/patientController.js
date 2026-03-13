@@ -2026,7 +2026,7 @@ const exportMedicineStock = async (req, res) => {
       const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
       
       // Row 1: Main Title
-      worksheet.mergeCells('A1:F1');
+      worksheet.mergeCells('A1:G1');
       const titleCell = worksheet.getCell('A1');
       titleCell.value = `Stock on  Date`;
       titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
@@ -2038,7 +2038,7 @@ const exportMedicineStock = async (req, res) => {
       };
       
       // Row 2: Date Info
-      worksheet.mergeCells('A2:F2');
+      worksheet.mergeCells('A2:G2');
       const dateCell = worksheet.getCell('A2');
       dateCell.value = `Report Date: ${displayDate}`;
       dateCell.font = { bold: true, size: 12 };
@@ -2048,7 +2048,7 @@ const exportMedicineStock = async (req, res) => {
       worksheet.addRow([]);
       
       // Row 4: Column Headers
-      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date"]);
+      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date", "Unit Price"]);
       
       // Style the column header row (row 4)
       const headerRow = worksheet.getRow(4);
@@ -2075,6 +2075,7 @@ const exportMedicineStock = async (req, res) => {
       worksheet.getColumn(4).width = 20;  // Company
       worksheet.getColumn(5).width = 15;  // Current Stock
       worksheet.getColumn(6).width = 20;  // Stock on Selected Date
+      worksheet.getColumn(7).width = 15;  // Unit Price
       
     } else {
       // Without dates - simple header
@@ -2083,7 +2084,8 @@ const exportMedicineStock = async (req, res) => {
         { header: "Product Name", key: "name", width: 40 },
         { header: "Unit", key: "unit", width: 10 },
         { header: "Company", key: "company", width: 20 },
-        { header: "Quantity", key: "quantity", width: 15 }
+        { header: "Quantity", key: "quantity", width: 15 },
+        { header: "Unit Price", key: "price", width: 15 }
       ];
       
       const headerRow = worksheet.getRow(1);
@@ -2113,14 +2115,16 @@ const exportMedicineStock = async (req, res) => {
             item.Unit,
             item.Company,
             item.Quantity, // Current stock (today)
-            item._doc?.stockAtDate ?? item.Quantity // Stock on selected date
+            item._doc?.stockAtDate ?? item.Quantity, // Stock on selected date
+            item.Price // Unit Price
           ]
         : [
             item.Code,
             item["Product Name"],
             item.Unit,
             item.Company,
-            item.Quantity
+            item.Quantity,
+            item.Price // Unit Price
           ];
       
       const row = worksheet.addRow(rowData);
@@ -2253,7 +2257,7 @@ const exportLowStock = async (req, res) => {
       const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
       
       // Row 1: Main Title
-      worksheet.mergeCells('A1:F1');
+      worksheet.mergeCells('A1:G1');
       const titleCell = worksheet.getCell('A1');
       titleCell.value = `Low Stock Alert`;
       titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
@@ -2265,7 +2269,7 @@ const exportLowStock = async (req, res) => {
       };
       
       // Row 2: Date Info
-      worksheet.mergeCells('A2:F2');
+      worksheet.mergeCells('A2:G2');
       const dateCell = worksheet.getCell('A2');
       dateCell.value = `Report Date: ${displayDate}`;
       dateCell.font = { bold: true, size: 12 };
@@ -2275,7 +2279,7 @@ const exportLowStock = async (req, res) => {
       worksheet.addRow([]);
       
       // Row 4: Column Headers (EXACTLY matching running stock report)
-      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date"]);
+      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date", "Unit Price"]);
       
       // Style the column header row (row 4)
       const headerRow = worksheet.getRow(4);
@@ -2302,6 +2306,7 @@ const exportLowStock = async (req, res) => {
       worksheet.getColumn(4).width = 20;  // Company
       worksheet.getColumn(5).width = 15;  // Current Stock
       worksheet.getColumn(6).width = 20;  // Stock on Selected Date
+      worksheet.getColumn(7).width = 15;  // Unit Price
       
     } else {
       // Without dates - simple header
@@ -2310,7 +2315,8 @@ const exportLowStock = async (req, res) => {
         { header: "Product Name", key: "name", width: 40 },
         { header: "Unit", key: "unit", width: 10 },
         { header: "Company", key: "company", width: 20 },
-        { header: "Quantity", key: "quantity", width: 15 }
+        { header: "Quantity", key: "quantity", width: 15 },
+        { header: "Unit Price", key: "price", width: 15 }
       ];
       
       const headerRow = worksheet.getRow(1);
@@ -2340,14 +2346,16 @@ const exportLowStock = async (req, res) => {
             item.Unit,
             item.Company,
             item.Quantity, // Current stock (today)
-            item._doc?.stockAtDate ?? item.Quantity // Stock on selected date
+            item._doc?.stockAtDate ?? item.Quantity, // Stock on selected date
+            item.Price // Unit Price
           ]
         : [
             item.Code,
             item["Product Name"],
             item.Unit,
             item.Company,
-            item.Quantity
+            item.Quantity,
+            item.Price // Unit Price
           ];
       
       const row = worksheet.addRow(rowData);
@@ -2426,7 +2434,7 @@ const exportExpiryStock = async (req, res) => {
     const worksheet = workbook.addWorksheet('Expiry Stock Report');
 
     // Title row
-    worksheet.mergeCells('A1:H1');
+    worksheet.mergeCells('A1:I1');
     const titleCell = worksheet.getCell('A1');
     titleCell.value = 'Expiry Stock Report';
     titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
@@ -2435,7 +2443,7 @@ const exportExpiryStock = async (req, res) => {
     worksheet.getRow(1).height = 30;
 
     // Generated date row
-    worksheet.mergeCells('A2:H2');
+    worksheet.mergeCells('A2:I2');
     const dateCell = worksheet.getCell('A2');
     dateCell.value = `Generated on: ${today.toLocaleDateString('en-IN')}`;
     dateCell.font = { bold: true, size: 11 };
@@ -2445,7 +2453,7 @@ const exportExpiryStock = async (req, res) => {
     worksheet.addRow([]);
 
     // Column headers — row 4
-    worksheet.addRow(['Code', 'Product Name', 'Unit', 'Company', 'Batch No.', 'Expiry Date', 'Qty in Stock', 'Status']);
+    worksheet.addRow(['Code', 'Product Name', 'Unit', 'Company', 'Batch No.', 'Expiry Date', 'Qty in Stock', 'Status', 'Unit Price']);
     const headerRow = worksheet.getRow(4);
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, size: 11 };
@@ -2467,6 +2475,7 @@ const exportExpiryStock = async (req, res) => {
     worksheet.getColumn(6).width = 15;  // Expiry Date
     worksheet.getColumn(7).width = 14;  // Qty in Stock
     worksheet.getColumn(8).width = 24;  // Status
+    worksheet.getColumn(9).width = 15;  // Unit Price
 
     // Data rows
     sortedList.forEach(({ med, status, color }) => {
@@ -2479,6 +2488,7 @@ const exportExpiryStock = async (req, res) => {
         med.expiryDate || 'N/A',
         med.Quantity,
         status,
+        med.Price,         // Unit Price
       ]);
 
       row.eachCell((cell) => {
