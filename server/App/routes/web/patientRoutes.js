@@ -32,6 +32,8 @@ const {
   getTherapyPatients,
   deleteTherapyFromVisit,
   updatePatientDetails,
+  getConsultationBills,
+  deleteConsultationBill
 } = require("../../controllers/web/patientController");
 
 const { ensureAuthenticated, ensureAdmin } = require("../../middleware/auth");
@@ -74,6 +76,9 @@ patientRouter.get("/balance-report", exportBalanceReport);
 patientRouter.get("/sponsor-report", exportSponsorReport);
 patientRouter.get("/discount-report", exportDiscountWiseReport);
 patientRouter.post("/import-bulk", importBulkPatientData);
+
+patientRouter.get("/consultation-bills", getConsultationBills);
+patientRouter.delete("/consultation-bills/:visitId", ensureAuthenticated, ensureAdmin, deleteConsultationBill);
 
 
 module.exports = patientRouter;
