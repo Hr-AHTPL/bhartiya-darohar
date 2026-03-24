@@ -4319,6 +4319,104 @@ const deleteTherapyFromVisit = async (req, res) => {
   }
 };
 
+const getConsultationBills = async (req, res) => {
+  try {
+    // ✅ FIX: Use $and to properly combine $ne: null and $ne: ""
+    // Duplicate object keys ({ $ne: null, $ne: "" }) silently drop the first —
+    // $and avoids that and correctly excludes both null and empty-string values.
+    const visits = await visitModel
+      .find({
+        $and: [
+          { consultationBillNumber: { $exists: true } },
+          { consultationBillNumber: { $ne: null } },
+          { consultationBillNumber: { $ne: "" } },
+        ],
+      })
+      .populate("patientId", "firstName lastName idno phone age gender")
+      .sort({ createdAt: -1 });
+
+    const bills = visits.map((visit) => {
+      const patient = visit.patientId;
+      const consultationAmount = visit.consultationamount || 0;
+      const discountPct = visit.discounts?.consultation?.percentage || 0;
+      const totalAfterDiscount =
+        consultationAmount - (consultationAmount * discountPct) / 100;
+
+      // receivedAmount = what was paid = totalAfterDiscount - outstanding balance
+      const balance = visit.balance?.consultation ?? 0;
+      const receivedAmount = Math.max(0, totalAfterDiscount - balance);
+
+      return {
+        _id: visit._id,
+        visitId: visit._id,
+        patientId: patient?._id?.toString() || "",
+        patientName: patient
+          ? `${patient.firstName} ${patient.lastName || ""}`.trim()
+          : "Unknown",
+        patientIdno: patient?.idno || "",
+        billNumber: visit.consultationBillNumber,
+        billDate: visit.date || "",           // DD/MM/YYYY string from visit
+        consultationAmount,
+        discountPercentage: discountPct,
+        discountApprovedBy: visit.discounts?.consultation?.approvedBy || "",
+        receivedAmount,
+        balance,
+        visitDate: visit.date || "",
+        appointment: visit.appointment || "",
+      };
+    });
+
+    return res.status(200).json({ success: true, bills });
+  } catch (error) {
+    console.error("❌ Error fetching consultation bills:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch consultation bills",
+      error: error.message,
+    });
+  }
+};
+
+const deleteConsultationBill = async (req, res) => {
+  try {
+    const { visitId } = req.params;
+ 
+    const visit = await visitModel.findById(visitId);
+    if (!visit) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Visit not found" });
+    }
+ 
+    if (!visit.consultationBillNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "This visit has no consultation bill to delete",
+      });
+    }
+ 
+    // Clear the consultation bill data only — keep the visit and patient intact
+    visit.consultationBillNumber = undefined;
+    visit.consultationamount = 0;
+    if (visit.balance) visit.balance.consultation = 0;
+    if (visit.discounts) visit.discounts.consultation = undefined;
+ 
+    await visit.save();
+ 
+    return res.status(200).json({
+      success: true,
+      message: "Consultation bill deleted successfully",
+    });
+  } catch (error) {
+    console.error("❌ Error deleting consultation bill:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete consultation bill",
+      error: error.message,
+    });
+  }
+};
+
 
 module.exports = {
   patientDetailsInsert,
@@ -4352,5 +4450,7 @@ module.exports = {
   importBulkPatientData,
   getTherapyPatients,
   deleteTherapyFromVisit,
+  getConsultationBills,
+  deleteConsultationBill,
   updatePatientDetails
 };
