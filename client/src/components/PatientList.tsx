@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,8 @@ import axios from "axios";
 import PatientEditDialog from "./PatientEditDialog";
 import { Edit } from "lucide-react";
 import API_BASE_URL from "@/config/api.config";
+import ConsultationBillHistory from "./ConsultationBillHistory";
+import { Receipt } from "lucide-react";
 
 interface Patient {
   id: string;
@@ -108,6 +111,8 @@ const [addedTherapies, setAddedTherapies] = useState<Array<{
   totalPrice: number;
 }>>([]);
 const [currentTherapySessions, setCurrentTherapySessions] = useState("1");
+
+const [showConsultationHistory, setShowConsultationHistory] = useState(false);
 
 
   // Therapy data and states
@@ -1125,6 +1130,16 @@ response = await axios.get(
               </div>
               <span>Patient Management</span>
               <Heart className="h-8 w-8 text-red-500 animate-pulse" />
+
+              <button
+    onClick={() => setShowConsultationHistory(true)}
+    className="ml-auto flex items-center gap-1.5 text-sm font-bold bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white px-3 py-1.5 rounded-xl shadow-md hover:shadow-lg transition-all duration-300"
+    title="View Consultation Bill History"
+  >
+    <Receipt className="h-4 w-4" />
+    <span className="hidden sm:inline">Consultation Bills</span>
+  </button>
+
             </CardTitle>
             <CardDescription className="text-xl text-gray-600 font-semibold">
               Search and manage patient records with enhanced filtering
@@ -1865,6 +1880,12 @@ response = await axios.get(
   }}
   patient={selectedPatientForEdit}
   onSave={handleSavePatient}
+/>
+
+
+<ConsultationBillHistory
+  isOpen={showConsultationHistory}
+  onClose={() => setShowConsultationHistory(false)}
 />
       </div>
     </div>
