@@ -1130,33 +1130,19 @@ const addMedicineToSale = () => {
     let rowIdx = startRow;
 
     // -------------------- Clinic Header --------------------
-    const headerStyle = {
-      alignment: { horizontal: "center" },
-      font: { bold: true, size: 14 },
-    };
-
     worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
     worksheet.getCell(`A${rowIdx}`).value = 'भारतीय धरोहर "वैद्यशाला"';
-    Object.assign(worksheet.getCell(`A${rowIdx}`), headerStyle);
-    worksheet.getRow(rowIdx).height = 30;
+    worksheet.getCell(`A${rowIdx}`).font = { bold: true, size: 18 };
+    worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
+    worksheet.getRow(rowIdx).height = 35;
     rowIdx++;
 
     worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
     worksheet.getCell(`A${rowIdx}`).value =
-      "D-76, Ground Floor, besides LPS GLOBAL SCHOOL, BI";
+      "D-76, Sector-51 Noida Gautam Budh Nagar, Contact- 0120-4026100, 9625963298";
+    worksheet.getCell(`A${rowIdx}`).font = { bold: true, size: 11 };
     worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
-    rowIdx++;
-
-    worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
-    worksheet.getCell(`A${rowIdx}`).value =
-      "Phone: 0120-4026100, 9625963298 | Email: immunityclinic0@gmail.com";
-    worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
-    rowIdx++;
-
-    worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
-    worksheet.getCell(`A${rowIdx}`).value =
-      "Reg No: 64793/2020 | GSTIN: 09AAJFI9867J1ZH";
-    worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
+    worksheet.getRow(rowIdx).height = 20;
     rowIdx++;
 
     worksheet.addRow([]);
