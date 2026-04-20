@@ -37,8 +37,9 @@ const generateExcelBill = async (saleId) => {
       };
 
       worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
-      worksheet.getCell(`A${rowIdx}`).value = "IMMUNITY CLINIC";
+      worksheet.getCell(`A${rowIdx}`).value = 'भारतीय धरोहर "वैद्यशाला"';
       Object.assign(worksheet.getCell(`A${rowIdx}`), headerStyle);
+      worksheet.getRow(rowIdx).height = 30;
       rowIdx++;
 
       worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
