@@ -552,34 +552,82 @@ const generateSaleReport = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Sales Records');
 
-    // Set column widths
+    // -------------------- Clinic Header --------------------
+    const TOTAL_COLS = 11; // A to K
+    const headerBg = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF8F0' } };
+
+    // Row 1 – Clinic Name
+    worksheet.mergeCells('A1:K1');
+    const clinicNameCell = worksheet.getCell('A1');
+    clinicNameCell.value = 'Bhartiya Dharohar';
+    clinicNameCell.font = { bold: true, size: 16, color: { argb: 'FF8B1A00' } };
+    clinicNameCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    clinicNameCell.fill = headerBg;
+    worksheet.getRow(1).height = 28;
+
+    // Row 2 – Address
+    worksheet.mergeCells('A2:K2');
+    const addrCell = worksheet.getCell('A2');
+    addrCell.value = 'D-76, Ground Floor, SECTOR 51, NOIDA';
+    addrCell.font = { size: 11, color: { argb: 'FF333333' } };
+    addrCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    addrCell.fill = headerBg;
+
+    // Row 3 – Phone & Email
+    worksheet.mergeCells('A3:K3');
+    const contactCell = worksheet.getCell('A3');
+    contactCell.value = 'Phone: 0120-4026100, 9625963298 | Email: bhartiyadharohar@gmail.com';
+    contactCell.font = { size: 10, color: { argb: 'FF333333' } };
+    contactCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    contactCell.fill = headerBg;
+
+    // Row 4 – GSTIN
+    worksheet.mergeCells('A4:K4');
+    const gstCell = worksheet.getCell('A4');
+    gstCell.value = 'GSTIN: 09AABTB2201M1ZZ';
+    gstCell.font = { size: 10, color: { argb: 'FF333333' } };
+    gstCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    gstCell.fill = headerBg;
+
+    // Row 5 – Report Title
+    worksheet.mergeCells('A5:K5');
+    const titleCell = worksheet.getCell('A5');
+    titleCell.value = 'SALES REPORT';
+    titleCell.font = { bold: true, size: 13, color: { argb: 'FFFF6600' } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF4E6' } };
+    worksheet.getRow(5).height = 22;
+
+    // Row 6 – blank separator
+    worksheet.getRow(6).height = 6;
+
+    // -------------------- Column widths (no header property — we set headers manually) --------------------
     worksheet.columns = [
-      { header: 'Date', key: 'saleDate', width: 12 },
-      { header: 'Patient ID', key: 'patientId', width: 15 },
-      { header: 'Bill No.', key: 'billNumber', width: 15 },
-      { header: 'Patient Name', key: 'patientName', width: 20 },
-      { header: 'Medicine', key: 'medicineName', width: 25 },
-      { header: 'Batch', key: 'batch', width: 12 },
-      { header: 'HSN', key: 'hsn', width: 12 },
-      { header: 'Expiry', key: 'expiry', width: 12 },
-      { header: 'Qty', key: 'quantity', width: 8 },
-      { header: 'Rate (₹)', key: 'pricePerUnit', width: 12 },
-      { header: 'Total (₹)', key: 'medicineTotal', width: 12 }
+      { key: 'saleDate', width: 12 },
+      { key: 'patientId', width: 15 },
+      { key: 'billNumber', width: 15 },
+      { key: 'patientName', width: 20 },
+      { key: 'medicineName', width: 25 },
+      { key: 'batch', width: 12 },
+      { key: 'hsn', width: 12 },
+      { key: 'expiry', width: 12 },
+      { key: 'quantity', width: 8 },
+      { key: 'pricePerUnit', width: 12 },
+      { key: 'medicineTotal', width: 12 }
     ];
 
-    // Header styling
-    const headerRow = worksheet.getRow(1);
-    headerRow.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
-    headerRow.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF0066CC' }
-    };
-    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
-    headerRow.height = 25;
+    // -------------------- Column header row (Row 7) --------------------
+    const colHeaderRow = worksheet.getRow(7);
+    colHeaderRow.values = ['Date', 'Patient ID', 'Bill No.', 'Patient Name', 'Medicine', 'Batch', 'HSN', 'Expiry', 'Qty', 'Rate (₹)', 'Total (₹)'];
+    colHeaderRow.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+    colHeaderRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    colHeaderRow.height = 25;
+    for (let c = 1; c <= 11; c++) {
+      colHeaderRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF6600' } };
+    }
 
     // Add data rows
-    let currentRowNumber = 2;
+    let currentRowNumber = 8;
     let grandTotal = 0;
 
     const salesByDate = {};
@@ -597,15 +645,13 @@ const generateSaleReport = async (req, res) => {
 
       // Date separator
       const dateSeparatorRow = worksheet.addRow([date, '', '', '', '', '', '', '', '', '']);
-      dateSeparatorRow.font = { bold: true, size: 11, color: { argb: 'FF0066CC' } };
-      dateSeparatorRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE6F2FF' }
-      };
+      dateSeparatorRow.font = { bold: true, size: 11, color: { argb: 'FFFF6600' } };
       worksheet.mergeCells(`A${currentRowNumber}:K${currentRowNumber}`);
       dateSeparatorRow.alignment = { horizontal: 'left', vertical: 'middle' };
       dateSeparatorRow.height = 22;
+      for (let c = 1; c <= 11; c++) {
+        dateSeparatorRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF4E6' } };
+      }
       currentRowNumber++;
 
       dateSales.forEach((sale, saleIndex) => {
@@ -648,14 +694,14 @@ const generateSaleReport = async (req, res) => {
             row.alignment = { horizontal: 'center', vertical: 'middle' };
             row.height = 20;
 
-            row.eachCell((cell) => {
-              cell.border = {
+            for (let c = 1; c <= 11; c++) {
+              row.getCell(c).border = {
                 top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
                 left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
                 bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
                 right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
               };
-            });
+            }
 
             currentRowNumber++;
           });
@@ -697,19 +743,14 @@ const generateSaleReport = async (req, res) => {
         }
 
         subtotalRow.font = { bold: true };
-        subtotalRow.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFF0F8FF' }
-        };
         subtotalRow.alignment = { horizontal: 'right', vertical: 'middle' };
-        
-        subtotalRow.eachCell((cell) => {
-          cell.border = {
-            top: { style: 'medium', color: { argb: 'FF0066CC' } },
-            bottom: { style: 'medium', color: { argb: 'FF0066CC' } }
+        for (let c = 1; c <= 11; c++) {
+          subtotalRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF4E6' } };
+          subtotalRow.getCell(c).border = {
+            top: { style: 'medium', color: { argb: 'FFFF6600' } },
+            bottom: { style: 'medium', color: { argb: 'FFFF6600' } }
           };
-        });
+        }
 
         dateTotal += saleTotal;
         currentRowNumber++;
@@ -725,21 +766,16 @@ const generateSaleReport = async (req, res) => {
         '', '', '', '', '', '', '', '', '', 'Date Total:', dateTotal.toFixed(2)
       ]);
 
-      dateTotalRow.font = { bold: true, size: 11, color: { argb: 'FF0066CC' } };
+      dateTotalRow.font = { bold: true, size: 11, color: { argb: 'FFFF6600' } };
       dateTotalRow.alignment = { horizontal: 'right', vertical: 'middle' };
       dateTotalRow.height = 25;
-      dateTotalRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFCCE5FF' }
-      };
-      
-      dateTotalRow.eachCell((cell) => {
-        cell.border = {
-          top: { style: 'double', color: { argb: 'FF0066CC' } },
-          bottom: { style: 'double', color: { argb: 'FF0066CC' } }
+      for (let c = 1; c <= 11; c++) {
+        dateTotalRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } };
+        dateTotalRow.getCell(c).border = {
+          top: { style: 'double', color: { argb: 'FFFF6600' } },
+          bottom: { style: 'double', color: { argb: 'FFFF6600' } }
         };
-      });
+      }
 
       grandTotal += dateTotal;
       currentRowNumber++;
@@ -758,23 +794,19 @@ const generateSaleReport = async (req, res) => {
       '', '', `Total Sales: ${sales.length}`, '', '', '', '', '', '', 'Grand Total:', grandTotal.toFixed(2)
     ]);
 
-    grandTotalRow.font = { bold: true, size: 10, color: { argb: 'FF0066CC' } };
+    grandTotalRow.font = { bold: true, size: 10, color: { argb: 'FFFF6600' } };
     grandTotalRow.alignment = { horizontal: 'right', vertical: 'middle' };
     grandTotalRow.height = 30;
     
     worksheet.mergeCells(`C${currentRowNumber}:I${currentRowNumber}`);
 
-    grandTotalRow.eachCell((cell) => {
-      cell.border = {
-        top: { style: 'double', color: { argb: 'FF0066CC' } },
-        bottom: { style: 'double', color: { argb: 'FF0066CC' } }
+    for (let c = 1; c <= 11; c++) {
+      grandTotalRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } };
+      grandTotalRow.getCell(c).border = {
+        top: { style: 'double', color: { argb: 'FFFF6600' } },
+        bottom: { style: 'double', color: { argb: 'FFFF6600' } }
       };
-      cell.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFB3D9FF' }
-      };
-    });
+    }
 
     const buffer = await workbook.xlsx.writeBuffer();
     
