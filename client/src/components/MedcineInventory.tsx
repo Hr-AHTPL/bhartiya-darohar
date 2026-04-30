@@ -456,6 +456,13 @@ const updateMedicinePriceInEdit = (medicineId: string, newPrice: number) => {
     overallTotal: 0,
   });
 
+  // Helper: get the start of the current fiscal year (April 1)
+  const getFiscalYearStart = () => {
+    const now = new Date();
+    const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    return new Date(year, 3, 1); // April 1
+  };
+
   useEffect(() => {
     const fetchSalesSummary = async () => {
       try {
@@ -465,6 +472,7 @@ const updateMedicinePriceInEdit = (medicineId: string, newPrice: number) => {
         const today = new Date().toISOString().split("T")[0]; // yyyy-mm-dd
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
+        const fiscalYearStart = getFiscalYearStart();
 
         let todayTotal = 0,
           monthlyTotal = 0,
@@ -472,7 +480,11 @@ const updateMedicinePriceInEdit = (medicineId: string, newPrice: number) => {
 
         for (const sale of salesData) {
           const saleDate = new Date(sale.saleDate);
-          overallTotal += sale.totalAmount;
+
+          // Fiscal year total (April 1 onwards)
+          if (saleDate >= fiscalYearStart) {
+            overallTotal += sale.totalAmount;
+          }
 
           if (saleDate.toISOString().split("T")[0] === today) {
             todayTotal += sale.totalAmount;
@@ -1135,7 +1147,7 @@ const addMedicineToSale = () => {
       font: { bold: true, size: 14 },
     };
 
-     worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
+    worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
     worksheet.getCell(`A${rowIdx}`).value = "BHARTIYA DHAROHAR";
     Object.assign(worksheet.getCell(`A${rowIdx}`), headerStyle);
     rowIdx++;
@@ -1526,10 +1538,10 @@ const handleRecordSale = async () => {
                       </div>
                     </div>
                     <p className="text-3xl font-bold text-gray-900 mb-1">
-                      {purchases.length}
+                      {purchases.filter(p => new Date(p.billingDate) >= getFiscalYearStart()).length}
                     </p>
                     <p className="text-green-600 text-sm font-medium">
-                      Purchase invoices recorded
+                      Purchase invoices (this FY)
                     </p>
                   </CardContent>
                 </Card>
@@ -1545,10 +1557,10 @@ const handleRecordSale = async () => {
                     </div>
                   </div>
                   <p className="text-3xl font-bold text-gray-900 mb-1">
-                    {sales.length}
+                    {sales.filter(s => new Date(s.saleDate) >= getFiscalYearStart()).length}
                   </p>
                   <p className="text-orange-600 text-sm font-medium">
-                      Sales invoices recorded
+                    Sales invoices (this FY)
                   </p>
                 </CardContent>
               </Card>
@@ -1961,7 +1973,7 @@ const handleRecordSale = async () => {
               <Card className="flex-1 bg-gradient-to-r from-red-100 to-red-200 border-2 border-red-300 shadow-lg rounded-2xl">
                 <CardHeader>
                   <CardTitle className="text-xl font-bold text-red-800">
-                    Total Sales
+                    Total Sales (FY {getFiscalYearStart().getFullYear()}-{getFiscalYearStart().getFullYear() + 1})
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
