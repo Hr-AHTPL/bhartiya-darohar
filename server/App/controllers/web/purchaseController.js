@@ -219,10 +219,12 @@ const generatePurchaseReport = async (req, res) => {
       { key: 'hsn', width: 12 },
       { key: 'expiryDate', width: 12 },
       { key: 'quantity', width: 10 },
-      { key: 'pricePerUnit', width: 12 },
+      { key: 'pricePerUnit', width: 14 },
+      { key: 'totalPrice', width: 14 },
       { key: 'discount', width: 10 },
-      { key: 'gst', width: 8 },
-      { key: 'total', width: 12 },
+      { key: 'valueAfterDiscount', width: 20 },
+      { key: 'gstValue', width: 14 },
+      { key: 'landingValue', width: 22 },
     ];
 
     // Add main header row
@@ -236,10 +238,12 @@ const generatePurchaseReport = async (req, res) => {
       'HSN',
       'Expiry',
       'Qty',
-      'Price/Unit',
+      'Price/Unit(₹)',
+      'Total Price(₹)',
       'Disc %',
-      'GST %',
-      'Total (₹)'
+      'Value After Discount(₹)',
+      'GST Value (₹)',
+      'Landing Value Without GST'
     ]);
 
     // Style header
@@ -254,13 +258,22 @@ const generatePurchaseReport = async (req, res) => {
 
     // Add data rows with medicine details
     let currentRowNumber = 2;
-    let totalAmount = 0;
+    let grandTotalPrice = 0;
+    let grandTotalVAD = 0;
+    let grandTotalLanding = 0;
 
     purchases.forEach((purchase, purchaseIndex) => {
       const purchaseDate = new Date(purchase.billingDate).toLocaleDateString('en-IN');
       
       // Check if medicines array exists and has items
       const medicines = purchase.medicines || [];
+
+      // Per-invoice accumulators
+      let invTotalPrice = 0;
+      let invDiscAmt = 0;
+      let invVAD = 0;
+      let invGSTVal = 0;
+      let invLanding = 0;
       
       if (medicines.length === 0) {
         console.warn(`⚠️ Purchase ${purchase.invoiceNumber} has no medicines`);
@@ -276,9 +289,11 @@ const generatePurchaseReport = async (req, res) => {
           expiryDate: '-',
           quantity: 0,
           pricePerUnit: '0.00',
+          totalPrice: '0.00',
           discount: 0,
-          gst: 0,
-          total: '0.00'
+          valueAfterDiscount: '0.00',
+          gstValue: '0.00',
+          landingValue: '0.00',
         });
         
         row.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -286,6 +301,16 @@ const generatePurchaseReport = async (req, res) => {
         currentRowNumber++;
       } else {
         medicines.forEach((medicine, medIndex) => {
+          const qty = medicine.quantity || 0;
+          const ppu = medicine.pricePerUnit || 0;
+          const discPct = medicine.discountPercent || 0;
+          const gstPct = medicine.gstPercent || 0;
+
+          const totalPriceVal = qty * ppu;
+          const vadVal = totalPriceVal - (totalPriceVal * discPct / 100);
+          const landingVal = vadVal / (1 + gstPct / 100);
+          const gstVal = vadVal - landingVal;
+
           const row = worksheet.addRow({
             billingDate: medIndex === 0 ? purchaseDate : '',
             invoiceNumber: medIndex === 0 ? purchase.invoiceNumber : '',
@@ -295,11 +320,13 @@ const generatePurchaseReport = async (req, res) => {
             batchNumber: medicine.batchNumber || 'N/A',
             hsn: medicine.hsn || 'N/A',
             expiryDate: medicine.expiryDate || 'N/A',
-            quantity: medicine.quantity || 0,
-            pricePerUnit: (medicine.pricePerUnit || 0).toFixed(2),
-            discount: medicine.discountPercent || 0,
-            gst: medicine.gstPercent || 0,
-            total: (medicine.total || 0).toFixed(2)
+            quantity: qty,
+            pricePerUnit: ppu.toFixed(2),
+            totalPrice: totalPriceVal.toFixed(2),
+            discount: discPct,
+            valueAfterDiscount: vadVal.toFixed(2),
+            gstValue: gstVal.toFixed(2),
+            landingValue: landingVal.toFixed(2),
           });
 
           // Styling
@@ -316,12 +343,23 @@ const generatePurchaseReport = async (req, res) => {
             };
           });
 
+          // Accumulate per-invoice totals
+          invTotalPrice += totalPriceVal;
+          invDiscAmt += (totalPriceVal * discPct / 100);
+          invVAD += vadVal;
+          invGSTVal += gstVal;
+          invLanding += landingVal;
+
           currentRowNumber++;
         });
       }
 
+      // Accumulate grand totals
+      grandTotalPrice += invTotalPrice;
+      grandTotalVAD += invVAD;
+      grandTotalLanding += invLanding;
+
       // Add purchase subtotal row
-      const purchaseTotal = purchase.grandTotal || 0;
       const subtotalRow = worksheet.addRow({
         billingDate: '',
         invoiceNumber: '',
@@ -330,12 +368,14 @@ const generatePurchaseReport = async (req, res) => {
         medicineName: '',
         batchNumber: '',
         hsn: '',
-        expiryDate: '',
+        expiryDate: 'Subtotal:',
         quantity: '',
         pricePerUnit: '',
+        totalPrice: invTotalPrice.toFixed(2),
         discount: '',
-        gst: 'Subtotal:',
-        total: purchaseTotal.toFixed(2)
+        valueAfterDiscount: invVAD.toFixed(2),
+        gstValue: (invVAD - invLanding).toFixed(2),
+        landingValue: invLanding.toFixed(2),
       });
 
       subtotalRow.font = { bold: true };
@@ -353,7 +393,6 @@ const generatePurchaseReport = async (req, res) => {
         };
       });
 
-      totalAmount += purchaseTotal;
       currentRowNumber++;
 
       // Add spacing between purchases
@@ -374,20 +413,22 @@ const generatePurchaseReport = async (req, res) => {
       '',
       '',
       '',
-      '',
-      '',
-      '',
       'GRAND TOTAL:',
-      totalAmount.toFixed(2)
+      '',
+      grandTotalPrice.toFixed(2),
+      '',
+      grandTotalVAD.toFixed(2),
+      (grandTotalVAD - grandTotalLanding).toFixed(2),
+      grandTotalLanding.toFixed(2),
     ]);
 
     grandTotalRow.font = { bold: true, size: 12, color: { argb: 'FFFF6600' } };
     grandTotalRow.alignment = { horizontal: 'right', vertical: 'middle' };
     grandTotalRow.height = 30;
     
-    // Merge cells for grand total
+    // Merge cells for grand total label
     worksheet.mergeCells(`A${currentRowNumber + 2}:B${currentRowNumber + 2}`);
-    worksheet.mergeCells(`C${currentRowNumber + 2}:K${currentRowNumber + 2}`);
+    worksheet.mergeCells(`C${currentRowNumber + 2}:H${currentRowNumber + 2}`);
 
     // Style grand total row
     grandTotalRow.eachCell((cell) => {
