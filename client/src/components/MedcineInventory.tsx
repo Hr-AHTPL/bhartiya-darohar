@@ -1135,26 +1135,26 @@ const addMedicineToSale = () => {
       font: { bold: true, size: 14 },
     };
 
-    worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
-    worksheet.getCell(`A${rowIdx}`).value = "IMMUNITY CLINIC";
+     worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
+    worksheet.getCell(`A${rowIdx}`).value = "BHARTIYA DHAROHAR";
     Object.assign(worksheet.getCell(`A${rowIdx}`), headerStyle);
     rowIdx++;
 
     worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
     worksheet.getCell(`A${rowIdx}`).value =
-      "D-76, Ground Floor, besides LPS GLOBAL SCHOOL, BI";
+      "D-76, Ground Floor, Sector 51, Noida";
     worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
     rowIdx++;
 
     worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
     worksheet.getCell(`A${rowIdx}`).value =
-      "Phone: 0120-4026100, 9625963298 | Email: immunityclinic0@gmail.com";
+      "Phone: 0120-4026100, 9625963298 | Email: bhartiyadharohar@gmail.com";
     worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
     rowIdx++;
 
     worksheet.mergeCells(`A${rowIdx}:G${rowIdx}`);
     worksheet.getCell(`A${rowIdx}`).value =
-      "Reg No: 64793/2020 | GSTIN: 09AAJFI9867J1ZH";
+      "GSTIN: 09AABTB2201M1ZZ";
     worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
     rowIdx++;
 
@@ -1295,7 +1295,7 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
     socialHeaderRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
     rowIdx++;
 
-    const instaRow = worksheet.addRow(["Instagram: https://www.instagram.com/clinicimmunity?igsh=YnhobzRyNTEwOXV5"]);
+    /*const instaRow = worksheet.addRow(["Instagram: https://www.instagram.com/clinicimmunity?igsh=YnhobzRyNTEwOXV5"]);
     instaRow.getCell(1).font = { size: 10, color: { argb: "FF000000" }, underline:false };
     instaRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
     rowIdx++;
@@ -1303,7 +1303,7 @@ addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
     const fbRow = worksheet.addRow(["Facebook: https://www.facebook.com/share/p/1Fjjh1KvJi/"]);
     fbRow.getCell(1).font = { size: 10, color: { argb: "FF000000" }, underline:false };
     fbRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
-    rowIdx++;
+    rowIdx++;*/
 
     return rowIdx;
   };
