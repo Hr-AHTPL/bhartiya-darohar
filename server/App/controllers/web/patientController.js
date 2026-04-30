@@ -2327,16 +2327,39 @@ const exportLowStock = async (req, res) => {
       const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
       let rowOffset = 0;
 
-      if (showBDLS) {
-        worksheet.mergeCells('A1:K1');
-        const bdCell = worksheet.getCell('A1');
-        bdCell.value = 'Bhartiya Dharohar';
-        bdCell.font = { bold: true, size: 18, color: { argb: 'FF1F4E79' } };
-        bdCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        bdCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' } };
-        worksheet.getRow(1).height = 32;
-        rowOffset = 1;
-      }
+// SAME HEADER BLOCK (copy from your working code)
+worksheet.mergeCells('A1:K1');
+const bdCell = worksheet.getCell('A1');
+
+if (showBDLS) {
+  bdCell.value = 'Bhartiya Dharohar';
+} else {
+  bdCell.value = 'Immunity Clinic';
+}
+
+bdCell.font = { bold: true, size: 18, color: { argb: 'FF1F4E79' } };
+bdCell.alignment = { horizontal: 'center', vertical: 'middle' };
+bdCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' } };
+worksheet.getRow(1).height = 32;
+
+// extra rows
+worksheet.mergeCells('A2:K2');
+worksheet.getCell("A2").value = "D-76, Ground Floor, SECTOR 51, NOIDA";
+worksheet.getCell("A2").alignment = { horizontal: "center" };
+
+worksheet.mergeCells('A3:K3');
+worksheet.getCell("A3").value = showBDLS
+  ? "Phone: 0120-4026100, 9625963298 | Email: bhartiyadharohar@gmail.com"
+  : "Phone: 0120-4026100, 9625963298 | Email: immunityclinic0@gmail.com";
+worksheet.getCell("A3").alignment = { horizontal: "center" };
+
+worksheet.mergeCells('A4:K4');
+worksheet.getCell("A4").value = showBDLS
+  ? "GSTIN: 09AABTB2201M1ZZ"
+  : "GSTIN: 09AABTB2201M1ZZ";
+worksheet.getCell("A4").alignment = { horizontal: "center" };
+
+rowOffset = 4;
 
       const titleRowNum = 1 + rowOffset;
       worksheet.mergeCells(`A${titleRowNum}:K${titleRowNum}`);
@@ -2542,17 +2565,39 @@ const exportExpiryStock = async (req, res) => {
 
     let rowOffset = 0;
 
-    // Optional Bhartiya Dharohar header
-    if (showBDES) {
-      worksheet.mergeCells('A1:N1');
-      const bdCell = worksheet.getCell('A1');
-      bdCell.value = 'Bhartiya Dharohar';
-      bdCell.font = { bold: true, size: 18, color: { argb: 'FF1F4E79' } };
-      bdCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      bdCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' } };
-      worksheet.getRow(1).height = 32;
-      rowOffset = 1;
-    }
+// SAME HEADER BLOCK (copy from your working code)
+worksheet.mergeCells('A1:N1');
+const bdCell = worksheet.getCell('A1');
+
+if (showBDES) {
+  bdCell.value = 'Bhartiya Dharohar';
+} else {
+  bdCell.value = 'Immunity Clinic';
+}
+
+bdCell.font = { bold: true, size: 18, color: { argb: 'FF1F4E79' } };
+bdCell.alignment = { horizontal: 'center', vertical: 'middle' };
+bdCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' } };
+worksheet.getRow(1).height = 32;
+
+// extra rows
+worksheet.mergeCells('A2:N2');
+worksheet.getCell("A2").value = "D-76, Ground Floor, SECTOR 51, NOIDA";
+worksheet.getCell("A2").alignment = { horizontal: "center" };
+
+worksheet.mergeCells('A3:N3');
+worksheet.getCell("A3").value = showBDES
+  ? "Phone: 0120-4026100, 9625963298 | Email: bhartiyadharohar@gmail.com"
+  : "Phone: 0120-4026100, 9625963298 | Email: immunityclinic0@gmail.com";
+worksheet.getCell("A3").alignment = { horizontal: "center" };
+
+worksheet.mergeCells('A4:N4');
+worksheet.getCell("A4").value = showBDES
+  ? "GSTIN: 09AABTB2201M1ZZ"
+  : "GSTIN: 09AABTB2201M1ZZ";
+worksheet.getCell("A4").alignment = { horizontal: "center" };
+
+rowOffset = 4;
 
     // Title row
     const titleRowNum = 1 + rowOffset;
