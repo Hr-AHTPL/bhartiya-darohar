@@ -37,25 +37,25 @@ const generateExcelBill = async (saleId) => {
       };
 
       worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
-      worksheet.getCell(`A${rowIdx}`).value = "IMMUNITY CLINIC";
+      worksheet.getCell(`A${rowIdx}`).value = "BHARTIYA DHAROHAR";
       Object.assign(worksheet.getCell(`A${rowIdx}`), headerStyle);
       rowIdx++;
 
       worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
       worksheet.getCell(`A${rowIdx}`).value =
-        "D-76, Ground Floor, besides LPS GLOBAL SCHOOL, BI";
+        "D-76, Ground Floor, SECTOR 51, NOIDA";
       worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
       rowIdx++;
 
       worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
       worksheet.getCell(`A${rowIdx}`).value =
-        "Phone: 0120-4026100, 9625963298 | Email: immunityclinic0@gmail.com";
+        "Phone: 0120-4026100, 9625963298 | Email: bhartiyadharohar@gmail.com";
       worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
       rowIdx++;
 
       worksheet.mergeCells(`A${rowIdx}:H${rowIdx}`);
       worksheet.getCell(`A${rowIdx}`).value =
-        "Reg No: 64793/2020 | GSTIN: 09AAJFI9867J1ZH";
+        "GSTIN: 09AABTB2201M1ZZ";
       worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: "center" };
       rowIdx++;
 
@@ -190,14 +190,14 @@ const generateExcelBill = async (saleId) => {
       addTotalRow("GRAND TOTAL:", `₹${Math.round(afterDiscount).toFixed(2)}`);
 
       // -------------------- Social Media Links (Bottom Left) --------------------
-      rowIdx += 2; // Add spacing
+      //rowIdx += 2; // Add spacing
       
-      const socialHeaderRow = worksheet.addRow(["Also Follow Us On:"]);
-      socialHeaderRow.getCell(1).font = { bold: true, size: 11 };
-      socialHeaderRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
-      rowIdx++;
+      //const socialHeaderRow = worksheet.addRow(["Also Follow Us On:"]);
+      //socialHeaderRow.getCell(1).font = { bold: true, size: 11 };
+      //socialHeaderRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
+      //rowIdx++;
 
-      const instaRow = worksheet.addRow(["Instagram: https://www.instagram.com/clinicimmunity?igsh=YnhobzRyNTEwOXV5"]);
+      /*const instaRow = worksheet.addRow(["Instagram: https://www.instagram.com/clinicimmunity?igsh=YnhobzRyNTEwOXV5"]);
       instaRow.getCell(1).font = { size: 10, color: { argb: "FF000000" }, underline: false };
       instaRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
       rowIdx++;
@@ -205,7 +205,7 @@ const generateExcelBill = async (saleId) => {
       const fbRow = worksheet.addRow(["Facebook: https://www.facebook.com/share/p/1Fjjh1KvJi/"]);
       fbRow.getCell(1).font = { size: 10, color: { argb: "FF000000" }, underline: false };
       fbRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
-      rowIdx++;
+      rowIdx++;*/
 
       return rowIdx;
     };
