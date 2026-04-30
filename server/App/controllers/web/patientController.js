@@ -1940,20 +1940,41 @@ res.send(buffer);
 const exportMedicineStock = async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
-    
+
+    // ── Helper: build a medicine-name → latest discountPercent map from purchases ──
+    const buildDiscountMap = async () => {
+      // Fetch all purchases sorted newest-first so the first match = most recent
+      const allPurchases = await PurchaseModel.find({}).sort({ billingDate: -1 });
+      const discountMap = {};
+      allPurchases.forEach(p => {
+        (p.medicines || []).forEach(m => {
+          if (m.name && !(m.name in discountMap)) {
+            // Store the first (most recent) discount found for this medicine
+            discountMap[m.name] = m.discountPercent || 0;
+          }
+        });
+      });
+      return discountMap;
+    };
+
     // Get all medicines with current stock
     const medicines = await medicineModel.find();
-    
+
+    // FIX: Bhartiya Dharohar header should appear only when the SELECTED REPORT DATE
+    // is after 14/04/2026 — not based on today's download date.
+    const reportDate = dateTo ? new Date(dateTo) : new Date(dateFrom || Date.now());
+    const cutoffDate = new Date(2026, 3, 14); // 14 April 2026
+    cutoffDate.setHours(0, 0, 0, 0);
+    reportDate.setHours(0, 0, 0, 0);
+    const showBhartiyaDharohar = reportDate > cutoffDate;
+
     if (dateFrom && dateTo) {
-      // Use the END date (dateTo) to calculate stock as of that date
       const selectedDate = new Date(dateTo);
       selectedDate.setHours(23, 59, 59, 999);
-      
-      // Get ALL purchases and sales
+
       const allPurchases = await PurchaseModel.find({});
       const allSales = await saleModel.find({});
-      
-      // Parse sale date helper
+
       const parseSaleDate = (dateStr) => {
         if (!dateStr) return null;
         if (dateStr.includes('/')) {
@@ -1962,16 +1983,13 @@ const exportMedicineStock = async (req, res) => {
         }
         return new Date(dateStr);
       };
-      
-      // Calculate quantities AFTER the selected date
+
       const purchaseAfter = {};
       const soldAfter = {};
-      
-      // Process ALL purchases that happened AFTER the selected date
+
       allPurchases.forEach(p => {
         const purchaseDate = new Date(p.billingDate);
         purchaseDate.setHours(0, 0, 0, 0);
-        
         if (purchaseDate > selectedDate && p.medicines) {
           p.medicines.forEach(m => {
             const medicineName = m.name;
@@ -1980,13 +1998,11 @@ const exportMedicineStock = async (req, res) => {
           });
         }
       });
-      
-      // Process ALL sales that happened AFTER the selected date
+
       allSales.forEach(s => {
         const saleDate = parseSaleDate(s.saleDate);
         if (saleDate) {
           saleDate.setHours(0, 0, 0, 0);
-          
           if (saleDate > selectedDate && s.medicines) {
             s.medicines.forEach(m => {
               const medicineName = m.medicineName;
@@ -1996,21 +2012,19 @@ const exportMedicineStock = async (req, res) => {
           }
         }
       });
-      
-      // Calculate stock as it was on the selected date
+
       medicines.forEach(med => {
         const name = med['Product Name'];
         const currentStock = med.Quantity || 0;
-        
-        // Formula: Stock on Selected Date = Current Stock + All Purchases After - All Sales After
         const purchasedAfterDate = purchaseAfter[name] || 0;
         const soldAfterDate = soldAfter[name] || 0;
-        
         const stockOnDate = currentStock + purchasedAfterDate - soldAfterDate;
-        
         med._doc.stockAtDate = Math.max(0, stockOnDate);
       });
     }
+
+    // FIX: Build discount map from purchase records
+    const discountMap = await buildDiscountMap();
 
     const sortedList = medicines.sort((a, b) => {
       const codeA = isNaN(a.Code) ? a.Code.toString() : Number(a.Code);
@@ -2021,64 +2035,99 @@ const exportMedicineStock = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Medicine Stock");
 
-    // ✅ ADD TITLE AND DATE HEADERS
     if (dateFrom && dateTo) {
       const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
-      
-      // Row 1: Main Title
-      worksheet.mergeCells('A1:G1');
-      const titleCell = worksheet.getCell('A1');
-      titleCell.value = `Stock on  Date`;
+      let rowOffset = 0;
+
+      // ── Optional Bhartiya Dharohar header (only when report date > 14/04/2026) ──
+      worksheet.mergeCells('A1:K1');
+const bdCell = worksheet.getCell('A1');
+
+if (showBhartiyaDharohar) {
+  bdCell.value = 'Bhartiya Dharohar';
+} else {
+  bdCell.value = 'Immunity Clinic';
+}
+
+bdCell.font = { bold: true, size: 18, color: { argb: 'FF1F4E79' } };
+bdCell.alignment = { horizontal: 'center', vertical: 'middle' };
+bdCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' } };
+worksheet.getRow(1).height = 32;
+
+// ===== EXTRA HEADER =====
+worksheet.mergeCells('A2:K2');
+worksheet.getCell("A2").value = "D-76, Ground Floor, SECTOR 51, NOIDA";
+worksheet.getCell("A2").alignment = { horizontal: "center" };
+
+worksheet.mergeCells('A3:K3');
+worksheet.getCell("A3").value = showBhartiyaDharohar
+  ? "Phone: 0120-4026100, 9625963298 | Email: bhartiyadharohar@gmail.com"
+  : "Phone: 0120-4026100, 9625963298 | Email: immunityclinic0@gmail.com";
+worksheet.getCell("A3").alignment = { horizontal: "center" };
+
+worksheet.mergeCells('A4:K4');
+worksheet.getCell("A4").value = showBhartiyaDharohar
+  ? "GSTIN: 09AABTB2201M1ZZ"
+  : "GSTIN: 09AABTB2201M1ZZ";
+worksheet.getCell("A4").alignment = { horizontal: "center" };
+
+// ✅ FINAL OFFSET
+rowOffset = 4;
+
+      // Main title
+      const titleRowNum = 1 + rowOffset;
+      worksheet.mergeCells(`A${titleRowNum}:K${titleRowNum}`);
+      const titleCell = worksheet.getCell(`A${titleRowNum}`);
+      titleCell.value = 'Stock on Date';
       titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
       titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      titleCell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFD9D9D9" },
-      };
-      
-      // Row 2: Date Info
-      worksheet.mergeCells('A2:G2');
-      const dateCell = worksheet.getCell('A2');
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+      worksheet.getRow(titleRowNum).height = 28;
+
+      // Date row
+      const dateRowNum = titleRowNum + 1;
+      worksheet.mergeCells(`A${dateRowNum}:K${dateRowNum}`);
+      const dateCell = worksheet.getCell(`A${dateRowNum}`);
       dateCell.value = `Report Date: ${displayDate}`;
       dateCell.font = { bold: true, size: 12 };
       dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      
-      // Row 3: Empty row for spacing
+
+      // Spacer
       worksheet.addRow([]);
-      
-      // Row 4: Column Headers
-      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date", "Unit Price"]);
-      
-      // Style the column header row (row 4)
-      const headerRow = worksheet.getRow(4);
-      headerRow.eachCell((cell) => {
+
+      // Column headers
+      worksheet.addRow([
+        "Code", "Product Name", "Unit", "Company",
+        "Stock on Selected Date", "Per Unit Price", "Total Price",
+        "Discount %", "Value After Discount", "GST Value (5% of Landing)", "Landing Value (Without GST)"
+      ]);
+
+      const colHeaderRowNum = dateRowNum + 2;
+      const colHeaderRow = worksheet.getRow(colHeaderRowNum);
+      colHeaderRow.eachCell((cell) => {
         cell.font = { bold: true, size: 11 };
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFFF00" },
-        };
-        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF00' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
+          top: { style: 'thin' }, bottom: { style: 'thin' },
+          left: { style: 'thin' }, right: { style: 'thin' },
         };
       });
-      
-      // Set column widths
-      worksheet.getColumn(1).width = 10;  // Code
-      worksheet.getColumn(2).width = 40;  // Product Name
-      worksheet.getColumn(3).width = 10;  // Unit
-      worksheet.getColumn(4).width = 20;  // Company
-      worksheet.getColumn(5).width = 15;  // Current Stock
-      worksheet.getColumn(6).width = 20;  // Stock on Selected Date
-      worksheet.getColumn(7).width = 15;  // Unit Price
-      
+      colHeaderRow.height = 36;
+
+      worksheet.getColumn(1).width  = 10;
+      worksheet.getColumn(2).width  = 40;
+      worksheet.getColumn(3).width  = 10;
+      worksheet.getColumn(4).width  = 22;
+      worksheet.getColumn(5).width  = 22;
+      worksheet.getColumn(6).width  = 16;
+      worksheet.getColumn(7).width  = 16;
+      worksheet.getColumn(8).width  = 14;
+      worksheet.getColumn(9).width  = 22;
+      worksheet.getColumn(10).width = 26;
+      worksheet.getColumn(11).width = 26;
+
     } else {
-      // Without dates - simple header
       worksheet.columns = [
         { header: "Code", key: "code", width: 10 },
         { header: "Product Name", key: "name", width: 40 },
@@ -2087,77 +2136,101 @@ const exportMedicineStock = async (req, res) => {
         { header: "Quantity", key: "quantity", width: 15 },
         { header: "Unit Price", key: "price", width: 15 }
       ];
-      
       const headerRow = worksheet.getRow(1);
       headerRow.eachCell((cell) => {
         cell.font = { bold: true };
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFFF00" },
-        };
-        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF00' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
+          top: { style: 'thin' }, bottom: { style: 'thin' },
+          left: { style: 'thin' }, right: { style: 'thin' },
         };
       });
     }
 
+    // ── Grand total accumulators ──
+    let gtTotalPrice = 0, gtVAD = 0, gtGST = 0, gtLanding = 0;
+
     // Add data rows
     sortedList.forEach((item) => {
-      const rowData = dateFrom && dateTo
-        ? [
-            item.Code,
-            item["Product Name"],
-            item.Unit,
-            item.Company,
-            item.Quantity, // Current stock (today)
-            item._doc?.stockAtDate ?? item.Quantity, // Stock on selected date
-            item.Price // Unit Price
-          ]
-        : [
-            item.Code,
-            item["Product Name"],
-            item.Unit,
-            item.Company,
-            item.Quantity,
-            item.Price // Unit Price
-          ];
-      
+      let rowData;
+      if (dateFrom && dateTo) {
+        const stockOnDate        = item._doc?.stockAtDate ?? item.Quantity ?? 0;
+        const unitPrice          = item.Price ?? 0;
+        const totalPrice         = stockOnDate * unitPrice;
+        // FIX: get discount from purchase data, not from medicine model
+        const discountPct        = discountMap[item['Product Name']] ?? 0;
+        const valueAfterDiscount = totalPrice - (totalPrice * discountPct / 100);
+        const landingValue       = (valueAfterDiscount / 105) * 100;
+        const gstValue           = landingValue * 0.05;
+
+        gtTotalPrice += totalPrice;
+        gtVAD        += valueAfterDiscount;
+        gtGST        += gstValue;
+        gtLanding    += landingValue;
+
+        rowData = [
+          item.Code,
+          item["Product Name"],
+          item.Unit,
+          item.Company,
+          stockOnDate,
+          unitPrice,
+          parseFloat(totalPrice.toFixed(2)),
+          discountPct,
+          parseFloat(valueAfterDiscount.toFixed(2)),
+          parseFloat(gstValue.toFixed(2)),
+          parseFloat(landingValue.toFixed(2)),
+        ];
+      } else {
+        rowData = [
+          item.Code, item["Product Name"], item.Unit,
+          item.Company, item.Quantity, item.Price
+        ];
+      }
+
       const row = worksheet.addRow(rowData);
       row.eachCell((cell) => {
-        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
+          top: { style: 'thin' }, bottom: { style: 'thin' },
+          left: { style: 'thin' }, right: { style: 'thin' },
         };
       });
     });
 
+    // ── Grand Total row (only for dated reports) ──
+    if (dateFrom && dateTo) {
+      worksheet.addRow([]);
+      const gtRow = worksheet.addRow([
+        '', '', '', 'GRAND TOTAL',
+        '', '',
+        parseFloat(gtTotalPrice.toFixed(2)),
+        '',
+        parseFloat(gtVAD.toFixed(2)),
+        parseFloat(gtGST.toFixed(2)),
+        parseFloat(gtLanding.toFixed(2)),
+      ]);
+      gtRow.font = { bold: true, size: 12 };
+      gtRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } };
+      gtRow.alignment = { horizontal: 'center', vertical: 'middle' };
+      gtRow.height = 24;
+      gtRow.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'double' }, bottom: { style: 'double' },
+          left: { style: 'thin' }, right: { style: 'thin' },
+        };
+      });
+    }
+
     const buffer = await workbook.xlsx.writeBuffer();
-
-res.setHeader(
-  "Content-Type",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-);
-res.setHeader(
-  "Content-Disposition",
-  "attachment; filename=MedicineStockReport.xlsx"
-);
-res.setHeader('Content-Length', buffer.length);
-
-res.send(buffer);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", "attachment; filename=MedicineStockReport.xlsx");
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
   } catch (error) {
     console.error("Error generating medicine stock report:", error.message);
-    res.status(500).json({
-      message: "Failed to export medicine stock",
-      error: error.message,
-    });
+    res.status(500).json({ message: "Failed to export medicine stock", error: error.message });
   }
 };
 
@@ -2165,23 +2238,37 @@ const exportLowStock = async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
     const MIN_STOCK = 10;
-    
-    // Get all medicines
+
+    // FIX: Bhartiya Dharohar based on selected REPORT date, not download date
+    const reportDateLS = dateTo ? new Date(dateTo) : new Date(dateFrom || Date.now());
+    const cutoffDateLS = new Date(2026, 3, 14);
+    cutoffDateLS.setHours(0, 0, 0, 0);
+    reportDateLS.setHours(0, 0, 0, 0);
+    const showBDLS = reportDateLS > cutoffDateLS;
+
+    // FIX: Build discount map from most-recent purchase per medicine
+    const allPurchasesForDiscount = await PurchaseModel.find({}).sort({ billingDate: -1 });
+    const discountMapLS = {};
+    allPurchasesForDiscount.forEach(p => {
+      (p.medicines || []).forEach(m => {
+        if (m.name && !(m.name in discountMapLS)) {
+          discountMapLS[m.name] = m.discountPercent || 0;
+        }
+      });
+    });
+
     const medicines = await medicineModel.find();
-    
-    // If dates provided, calculate stock as it was on that date
+
     if (dateFrom && dateTo) {
-      // Use the END date to calculate stock
       const selectedDate = new Date(dateTo);
       selectedDate.setHours(23, 59, 59, 999);
-      
+
       const allPurchases = await PurchaseModel.find({});
       const allSales = await saleModel.find({});
-      
+
       const purchaseAfter = {};
       const soldAfter = {};
-      
-      // Parse sale date helper
+
       const parseSaleDate = (dateStr) => {
         if (!dateStr) return null;
         if (dateStr.includes('/')) {
@@ -2190,55 +2277,39 @@ const exportLowStock = async (req, res) => {
         }
         return new Date(dateStr);
       };
-      
-      // Process purchases AFTER selected date
+
       allPurchases.forEach(p => {
         const purchaseDate = new Date(p.billingDate);
         purchaseDate.setHours(0, 0, 0, 0);
-        
         if (purchaseDate > selectedDate && p.medicines) {
           p.medicines.forEach(m => {
-            const medicineName = m.name;
-            const qty = m.quantity || 0;
-            purchaseAfter[medicineName] = (purchaseAfter[medicineName] || 0) + qty;
+            purchaseAfter[m.name] = (purchaseAfter[m.name] || 0) + (m.quantity || 0);
           });
         }
       });
-      
-      // Process sales AFTER selected date
+
       allSales.forEach(s => {
         const saleDate = parseSaleDate(s.saleDate);
         if (saleDate) {
           saleDate.setHours(0, 0, 0, 0);
-          
           if (saleDate > selectedDate && s.medicines) {
             s.medicines.forEach(m => {
-              const medicineName = m.medicineName;
-              const qty = m.quantity || 0;
-              soldAfter[medicineName] = (soldAfter[medicineName] || 0) + qty;
+              soldAfter[m.medicineName] = (soldAfter[m.medicineName] || 0) + (m.quantity || 0);
             });
           }
         }
       });
-      
-      // Calculate stock on selected date
+
       medicines.forEach(med => {
         const name = med['Product Name'];
-        const currentStock = med.Quantity || 0;
-        
-        const purchasedAfterDate = purchaseAfter[name] || 0;
-        const soldAfterDate = soldAfter[name] || 0;
-        
-        const stockOnDate = currentStock + purchasedAfterDate - soldAfterDate;
-        
+        const stockOnDate = (med.Quantity || 0) + (purchaseAfter[name] || 0) - (soldAfter[name] || 0);
         med._doc.stockAtDate = Math.max(0, stockOnDate);
       });
     }
 
-    // Filter for low stock based on calculated stock at date
     const filteredSortedList = medicines
       .filter((item) => {
-        const stockToCheck = dateFrom && dateTo 
+        const stockToCheck = dateFrom && dateTo
           ? (item._doc?.stockAtDate ?? item.Quantity)
           : item.Quantity;
         return Number(stockToCheck) <= MIN_STOCK;
@@ -2252,64 +2323,71 @@ const exportLowStock = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Low Stock Alert");
 
-    // ✅ MATCH RUNNING STOCK REPORT STRUCTURE
     if (dateFrom && dateTo) {
       const displayDate = dateFrom === dateTo ? dateTo : `${dateFrom} to ${dateTo}`;
-      
-      // Row 1: Main Title
-      worksheet.mergeCells('A1:G1');
-      const titleCell = worksheet.getCell('A1');
-      titleCell.value = `Low Stock Alert`;
+      let rowOffset = 0;
+
+      if (showBDLS) {
+        worksheet.mergeCells('A1:K1');
+        const bdCell = worksheet.getCell('A1');
+        bdCell.value = 'Bhartiya Dharohar';
+        bdCell.font = { bold: true, size: 18, color: { argb: 'FF1F4E79' } };
+        bdCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        bdCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' } };
+        worksheet.getRow(1).height = 32;
+        rowOffset = 1;
+      }
+
+      const titleRowNum = 1 + rowOffset;
+      worksheet.mergeCells(`A${titleRowNum}:K${titleRowNum}`);
+      const titleCell = worksheet.getCell(`A${titleRowNum}`);
+      titleCell.value = 'Low Stock Alert';
       titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
       titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      titleCell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFD9D9D9" },
-      };
-      
-      // Row 2: Date Info
-      worksheet.mergeCells('A2:G2');
-      const dateCell = worksheet.getCell('A2');
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+      worksheet.getRow(titleRowNum).height = 28;
+
+      const dateRowNum = titleRowNum + 1;
+      worksheet.mergeCells(`A${dateRowNum}:K${dateRowNum}`);
+      const dateCell = worksheet.getCell(`A${dateRowNum}`);
       dateCell.value = `Report Date: ${displayDate}`;
       dateCell.font = { bold: true, size: 12 };
       dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      
-      // Row 3: Empty row for spacing
+
       worksheet.addRow([]);
-      
-      // Row 4: Column Headers (EXACTLY matching running stock report)
-      worksheet.addRow(["Code", "Product Name", "Unit", "Company", "Current Stock", "Stock on Selected Date", "Unit Price"]);
-      
-      // Style the column header row (row 4)
-      const headerRow = worksheet.getRow(4);
-      headerRow.eachCell((cell) => {
+
+      worksheet.addRow([
+        "Code", "Product Name", "Unit", "Company",
+        "Stock on Selected Date", "Per Unit Price", "Total Price",
+        "Discount %", "Value After Discount", "GST Value (5% of Landing)", "Landing Value (Without GST)"
+      ]);
+
+      const colHeaderRowNum = dateRowNum + 2;
+      const colHeaderRow = worksheet.getRow(colHeaderRowNum);
+      colHeaderRow.eachCell((cell) => {
         cell.font = { bold: true, size: 11 };
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFFF00" },
-        };
-        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF00' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
+          top: { style: 'thin' }, bottom: { style: 'thin' },
+          left: { style: 'thin' }, right: { style: 'thin' },
         };
       });
-      
-      // Set column widths (EXACTLY matching running stock report)
-      worksheet.getColumn(1).width = 10;  // Code
-      worksheet.getColumn(2).width = 40;  // Product Name
-      worksheet.getColumn(3).width = 10;  // Unit
-      worksheet.getColumn(4).width = 20;  // Company
-      worksheet.getColumn(5).width = 15;  // Current Stock
-      worksheet.getColumn(6).width = 20;  // Stock on Selected Date
-      worksheet.getColumn(7).width = 15;  // Unit Price
-      
+      colHeaderRow.height = 36;
+
+      worksheet.getColumn(1).width  = 10;
+      worksheet.getColumn(2).width  = 40;
+      worksheet.getColumn(3).width  = 10;
+      worksheet.getColumn(4).width  = 22;
+      worksheet.getColumn(5).width  = 22;
+      worksheet.getColumn(6).width  = 16;
+      worksheet.getColumn(7).width  = 16;
+      worksheet.getColumn(8).width  = 14;
+      worksheet.getColumn(9).width  = 22;
+      worksheet.getColumn(10).width = 26;
+      worksheet.getColumn(11).width = 26;
+
     } else {
-      // Without dates - simple header
       worksheet.columns = [
         { header: "Code", key: "code", width: 10 },
         { header: "Product Name", key: "name", width: 40 },
@@ -2318,77 +2396,94 @@ const exportLowStock = async (req, res) => {
         { header: "Quantity", key: "quantity", width: 15 },
         { header: "Unit Price", key: "price", width: 15 }
       ];
-      
       const headerRow = worksheet.getRow(1);
       headerRow.eachCell((cell) => {
         cell.font = { bold: true };
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFFF00" },
-        };
-        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF00' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
+          top: { style: 'thin' }, bottom: { style: 'thin' },
+          left: { style: 'thin' }, right: { style: 'thin' },
         };
       });
     }
 
-    // Add data rows
+    // ── Grand total accumulators ──
+    let gtTotalPriceLS = 0, gtVADLS = 0, gtGSTLS = 0, gtLandingLS = 0;
+
     filteredSortedList.forEach((item) => {
-      const rowData = dateFrom && dateTo
-        ? [
-            item.Code,
-            item["Product Name"],
-            item.Unit,
-            item.Company,
-            item.Quantity, // Current stock (today)
-            item._doc?.stockAtDate ?? item.Quantity, // Stock on selected date
-            item.Price // Unit Price
-          ]
-        : [
-            item.Code,
-            item["Product Name"],
-            item.Unit,
-            item.Company,
-            item.Quantity,
-            item.Price // Unit Price
-          ];
-      
+      let rowData;
+      if (dateFrom && dateTo) {
+        const stockOnDate        = item._doc?.stockAtDate ?? item.Quantity ?? 0;
+        const unitPrice          = item.Price ?? 0;
+        const totalPrice         = stockOnDate * unitPrice;
+        const discountPct        = discountMapLS[item['Product Name']] ?? 0;
+        const valueAfterDiscount = totalPrice - (totalPrice * discountPct / 100);
+        const landingValue       = (valueAfterDiscount / 105) * 100;
+        const gstValue           = landingValue * 0.05;
+
+        gtTotalPriceLS += totalPrice;
+        gtVADLS        += valueAfterDiscount;
+        gtGSTLS        += gstValue;
+        gtLandingLS    += landingValue;
+
+        rowData = [
+          item.Code, item["Product Name"], item.Unit, item.Company,
+          stockOnDate, unitPrice,
+          parseFloat(totalPrice.toFixed(2)),
+          discountPct,
+          parseFloat(valueAfterDiscount.toFixed(2)),
+          parseFloat(gstValue.toFixed(2)),
+          parseFloat(landingValue.toFixed(2)),
+        ];
+      } else {
+        rowData = [
+          item.Code, item["Product Name"], item.Unit,
+          item.Company, item.Quantity, item.Price
+        ];
+      }
+
       const row = worksheet.addRow(rowData);
       row.eachCell((cell) => {
-        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
+          top: { style: 'thin' }, bottom: { style: 'thin' },
+          left: { style: 'thin' }, right: { style: 'thin' },
         };
       });
     });
 
+    // ── Grand Total row ──
+    if (dateFrom && dateTo) {
+      worksheet.addRow([]);
+      const gtRow = worksheet.addRow([
+        '', '', '', 'GRAND TOTAL', '', '',
+        parseFloat(gtTotalPriceLS.toFixed(2)),
+        '',
+        parseFloat(gtVADLS.toFixed(2)),
+        parseFloat(gtGSTLS.toFixed(2)),
+        parseFloat(gtLandingLS.toFixed(2)),
+      ]);
+      gtRow.font = { bold: true, size: 12 };
+      gtRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } };
+      gtRow.alignment = { horizontal: 'center', vertical: 'middle' };
+      gtRow.height = 24;
+      gtRow.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'double' }, bottom: { style: 'double' },
+          left: { style: 'thin' }, right: { style: 'thin' },
+        };
+      });
+    }
+
     const buffer = await workbook.xlsx.writeBuffer();
-
-res.setHeader(
-  "Content-Type",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-);
-res.setHeader(
-  "Content-Disposition",
-  "attachment; filename=LowStockAlert.xlsx"
-);
-res.setHeader('Content-Length', buffer.length);
-
-res.send(buffer);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", "attachment; filename=LowStockAlert.xlsx");
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
   } catch (error) {
     console.error("Error generating low stock report:", error.message);
-    res.status(500).json({
-      message: "Failed to export low stock",
-      error: error.message,
-    });
+    res.status(500).json({ message: "Failed to export low stock", error: error.message });
   }
 };
 
@@ -2398,16 +2493,29 @@ const exportExpiryStock = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Parse dd/mm/yyyy or yyyy-mm-dd or any date string
+    // FIX: Bhartiya Dharohar for expiry report — compare today's date (this report has no date param)
+    const cutoffDateES = new Date(2026, 3, 14);
+    cutoffDateES.setHours(0, 0, 0, 0);
+    const showBDES = today > cutoffDateES;
+
+    // FIX: Build discount map from most-recent purchase per medicine
+    const allPurchasesES = await PurchaseModel.find({}).sort({ billingDate: -1 });
+    const discountMapES = {};
+    allPurchasesES.forEach(p => {
+      (p.medicines || []).forEach(m => {
+        if (m.name && !(m.name in discountMapES)) {
+          discountMapES[m.name] = m.discountPercent || 0;
+        }
+      });
+    });
+
     const parseExpiryDate = (str) => {
       if (!str || str === 'N/A') return null;
       if (str.includes('/')) {
         const parts = str.split('/');
         if (parts.length === 3) {
-          // dd/mm/yyyy
           const [day, month, year] = parts.map(Number);
           if (year > 1000) return new Date(year, month - 1, day);
-          // mm/yyyy (no day)
           return new Date(parts[1], parts[0] - 1, 1);
         }
       }
@@ -2415,15 +2523,14 @@ const exportExpiryStock = async (req, res) => {
       return isNaN(d.getTime()) ? null : d;
     };
 
-    // Sort: expired first, then expiring soon, then by expiry date asc, then no expiry at end
     const getStatusAndDays = (med) => {
       const expiryDate = parseExpiryDate(med.expiryDate);
       if (!expiryDate) return { status: 'No Expiry Date', days: Infinity, color: null };
       const diffDays = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
-      if (diffDays < 0)        return { status: 'EXPIRED',                   days: diffDays,  color: 'FFFF9999' };
-      if (diffDays <= 30)      return { status: 'Expiring Soon (≤30 days)',  days: diffDays,  color: 'FFFFCC99' };
-      if (diffDays <= 90)      return { status: 'Expiring in 90 days',       days: diffDays,  color: 'FFFFFF99' };
-      return                          { status: 'OK',                         days: diffDays,  color: null };
+      if (diffDays < 0)   return { status: 'EXPIRED',                  days: diffDays, color: 'FFFF9999' };
+      if (diffDays <= 30) return { status: 'Expiring Soon (≤30 days)', days: diffDays, color: 'FFFFCC99' };
+      if (diffDays <= 90) return { status: 'Expiring in 90 days',      days: diffDays, color: 'FFFFFF99' };
+      return                     { status: 'OK',                        days: diffDays, color: null };
     };
 
     const sortedList = medicines
@@ -2433,18 +2540,34 @@ const exportExpiryStock = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Expiry Stock Report');
 
+    let rowOffset = 0;
+
+    // Optional Bhartiya Dharohar header
+    if (showBDES) {
+      worksheet.mergeCells('A1:N1');
+      const bdCell = worksheet.getCell('A1');
+      bdCell.value = 'Bhartiya Dharohar';
+      bdCell.font = { bold: true, size: 18, color: { argb: 'FF1F4E79' } };
+      bdCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      bdCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' } };
+      worksheet.getRow(1).height = 32;
+      rowOffset = 1;
+    }
+
     // Title row
-    worksheet.mergeCells('A1:I1');
-    const titleCell = worksheet.getCell('A1');
+    const titleRowNum = 1 + rowOffset;
+    worksheet.mergeCells(`A${titleRowNum}:N${titleRowNum}`);
+    const titleCell = worksheet.getCell(`A${titleRowNum}`);
     titleCell.value = 'Expiry Stock Report';
     titleCell.font = { bold: true, size: 16, color: { argb: 'FF000000' } };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
     titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
-    worksheet.getRow(1).height = 30;
+    worksheet.getRow(titleRowNum).height = 30;
 
     // Generated date row
-    worksheet.mergeCells('A2:I2');
-    const dateCell = worksheet.getCell('A2');
+    const genDateRowNum = titleRowNum + 1;
+    worksheet.mergeCells(`A${genDateRowNum}:N${genDateRowNum}`);
+    const dateCell = worksheet.getCell(`A${genDateRowNum}`);
     dateCell.value = `Generated on: ${today.toLocaleDateString('en-IN')}`;
     dateCell.font = { bold: true, size: 11 };
     dateCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -2452,33 +2575,59 @@ const exportExpiryStock = async (req, res) => {
     // Empty spacer row
     worksheet.addRow([]);
 
-    // Column headers — row 4
-    worksheet.addRow(['Code', 'Product Name', 'Unit', 'Company', 'Batch No.', 'Expiry Date', 'Qty in Stock', 'Status', 'Unit Price']);
-    const headerRow = worksheet.getRow(4);
+    // Column headers
+    worksheet.addRow([
+      'Code', 'Product Name', 'Unit', 'Company', 'Batch No.', 'Expiry Date',
+      'Stock on Selected Date', 'Status',
+      'Per Unit Price', 'Total Price', 'Discount %', 'Value After Discount',
+      'GST Value (5% of Landing)', 'Landing Value (Without GST)'
+    ]);
+
+    const headerRowNum = genDateRowNum + 2;
+    const headerRow = worksheet.getRow(headerRowNum);
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, size: 11 };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF00' } };
-      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
       cell.border = {
         top: { style: 'thin' }, bottom: { style: 'thin' },
         left: { style: 'thin' }, right: { style: 'thin' },
       };
     });
-    headerRow.height = 22;
+    headerRow.height = 36;
 
-    // Column widths
-    worksheet.getColumn(1).width = 10;  // Code
-    worksheet.getColumn(2).width = 40;  // Product Name
-    worksheet.getColumn(3).width = 10;  // Unit
-    worksheet.getColumn(4).width = 22;  // Company
-    worksheet.getColumn(5).width = 15;  // Batch No.
-    worksheet.getColumn(6).width = 15;  // Expiry Date
-    worksheet.getColumn(7).width = 14;  // Qty in Stock
-    worksheet.getColumn(8).width = 24;  // Status
-    worksheet.getColumn(9).width = 15;  // Unit Price
+    worksheet.getColumn(1).width  = 10;
+    worksheet.getColumn(2).width  = 40;
+    worksheet.getColumn(3).width  = 10;
+    worksheet.getColumn(4).width  = 22;
+    worksheet.getColumn(5).width  = 15;
+    worksheet.getColumn(6).width  = 15;
+    worksheet.getColumn(7).width  = 22;
+    worksheet.getColumn(8).width  = 24;
+    worksheet.getColumn(9).width  = 16;
+    worksheet.getColumn(10).width = 16;
+    worksheet.getColumn(11).width = 14;
+    worksheet.getColumn(12).width = 22;
+    worksheet.getColumn(13).width = 26;
+    worksheet.getColumn(14).width = 26;
 
-    // Data rows
+    // ── Grand total accumulators ──
+    let gtTotalES = 0, gtVADES = 0, gtGSTES = 0, gtLandingES = 0;
+
     sortedList.forEach(({ med, status, color }) => {
+      const stockOnDate        = med.Quantity ?? 0;
+      const unitPrice          = med.Price ?? 0;
+      const totalPrice         = stockOnDate * unitPrice;
+      const discountPct        = discountMapES[med['Product Name']] ?? 0;
+      const valueAfterDiscount = totalPrice - (totalPrice * discountPct / 100);
+      const landingValue       = (valueAfterDiscount / 105) * 100;
+      const gstValue           = landingValue * 0.05;
+
+      gtTotalES   += totalPrice;
+      gtVADES     += valueAfterDiscount;
+      gtGSTES     += gstValue;
+      gtLandingES += landingValue;
+
       const row = worksheet.addRow([
         med.Code,
         med['Product Name'],
@@ -2486,9 +2635,14 @@ const exportExpiryStock = async (req, res) => {
         med.Company || 'N/A',
         med.batchNumber || 'N/A',
         med.expiryDate || 'N/A',
-        med.Quantity,
+        stockOnDate,
         status,
-        med.Price,         // Unit Price
+        unitPrice,
+        parseFloat(totalPrice.toFixed(2)),
+        discountPct,
+        parseFloat(valueAfterDiscount.toFixed(2)),
+        parseFloat(gstValue.toFixed(2)),
+        parseFloat(landingValue.toFixed(2)),
       ]);
 
       row.eachCell((cell) => {
@@ -2501,6 +2655,28 @@ const exportExpiryStock = async (req, res) => {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
         }
       });
+    });
+
+    // ── Grand Total row ──
+    worksheet.addRow([]);
+    const gtRowES = worksheet.addRow([
+      '', '', '', 'GRAND TOTAL', '', '', '', '',
+      '',
+      parseFloat(gtTotalES.toFixed(2)),
+      '',
+      parseFloat(gtVADES.toFixed(2)),
+      parseFloat(gtGSTES.toFixed(2)),
+      parseFloat(gtLandingES.toFixed(2)),
+    ]);
+    gtRowES.font = { bold: true, size: 12 };
+    gtRowES.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE0B2' } };
+    gtRowES.alignment = { horizontal: 'center', vertical: 'middle' };
+    gtRowES.height = 24;
+    gtRowES.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'double' }, bottom: { style: 'double' },
+        left: { style: 'thin' }, right: { style: 'thin' },
+      };
     });
 
     const buffer = await workbook.xlsx.writeBuffer();
