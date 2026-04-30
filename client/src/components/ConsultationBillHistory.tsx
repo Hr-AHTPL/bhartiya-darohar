@@ -245,7 +245,7 @@ export default function ConsultationBillHistory({
               color: "from-amber-100 to-amber-200 border-amber-300 text-amber-800",
             },
             {
-              label: "Fiscal Year Consultations",
+              label: "Yearly Consultations",
               value: fiscalYearTotal,
               color: "from-red-100 to-red-200 border-red-300 text-red-800",
             },
