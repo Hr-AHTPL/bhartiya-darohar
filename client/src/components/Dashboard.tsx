@@ -169,11 +169,11 @@ const Dashboard = () => {
             <div className="flex flex-col items-center text-center space-y-2 px-4">
   <div className="leading-none">
     <h1 className="text-6xl md:text-7xl font-bold text-orange-600">
-      Immunity
+      Bhartiya Dharohar
     </h1>
-    <h1 className="text-6xl md:text-6xl font-bold text-orange-600">
-      Clinic
-    </h1>
+   {/* <h1 className="text-5.5xl md:text-7xl font-bold text-orange-600">
+      Dharohar
+    </h1> */}
   </div>
 
   <p className="pt-5 text-2xl md:text-xl text-orange-800 font-medium leading-snug">
