@@ -196,10 +196,30 @@ export default function ConsultationBillHistory({
       .reduce((sum, b) => sum + (b.receivedAmount || 0), 0);
   })();
 
-  const overallTotal = bills.reduce(
-    (sum, b) => sum + (b.receivedAmount || 0),
-    0
-  );
+  const fiscalYearTotal = (() => {
+    const now = new Date();
+    // Indian fiscal year starts on 1 April
+    // If current month is Jan/Feb/Mar, fiscal year started in the previous calendar year
+    const fiscalYearStart = new Date(
+      now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1,
+      3, // April (0-indexed)
+      1
+    );
+    return bills
+      .filter((b) => {
+        if (!b.billDate) return false;
+        // billDate is DD/MM/YYYY
+        const parts = b.billDate.split("/");
+        if (parts.length !== 3) return false;
+        const billDateObj = new Date(
+          Number(parts[2]),
+          Number(parts[1]) - 1,
+          Number(parts[0])
+        );
+        return billDateObj >= fiscalYearStart;
+      })
+      .reduce((sum, b) => sum + (b.receivedAmount || 0), 0);
+  })();
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -225,8 +245,8 @@ export default function ConsultationBillHistory({
               color: "from-amber-100 to-amber-200 border-amber-300 text-amber-800",
             },
             {
-              label: "Total Consultations",
-              value: overallTotal,
+              label: "Fiscal Year Consultations",
+              value: fiscalYearTotal,
               color: "from-red-100 to-red-200 border-red-300 text-red-800",
             },
           ].map((card) => (
