@@ -1863,57 +1863,94 @@ const exportRevenueReport = async (req, res) => {
     worksheet.getColumn(3).width = 20;
     worksheet.getColumn(4).width = 20;
 
-    // Title row
-    worksheet.mergeCells("B1:D1");
-    const titleCell = worksheet.getCell("B1");
-    titleCell.value = `Revenue Report (${dateFrom} to ${dateTo})`;
-    titleCell.font = { bold: true, size: 14, underline: true };
+    const headerBg = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF8F0" } };
+
+    // Row 1 – Clinic Name
+    worksheet.mergeCells("A1:D1");
+    const clinicNameCell = worksheet.getCell("A1");
+    clinicNameCell.value = "Bhartiya Dharohar";
+    clinicNameCell.font = { bold: true, size: 16, color: { argb: "FF8B1A00" } };
+    clinicNameCell.alignment = { horizontal: "center", vertical: "middle" };
+    clinicNameCell.fill = headerBg;
+    worksheet.getRow(1).height = 28;
+
+    // Row 2 – Address
+    worksheet.mergeCells("A2:D2");
+    const addrCell = worksheet.getCell("A2");
+    addrCell.value = "D-76, Ground Floor, SECTOR 51, NOIDA";
+    addrCell.font = { size: 11, color: { argb: "FF333333" } };
+    addrCell.alignment = { horizontal: "center", vertical: "middle" };
+    addrCell.fill = headerBg;
+
+    // Row 3 – Phone & Email
+    worksheet.mergeCells("A3:D3");
+    const contactCell = worksheet.getCell("A3");
+    contactCell.value = "Phone: 0120-4026100, 9625963298 | Email: bhartiyadharohar@gmail.com";
+    contactCell.font = { size: 10, color: { argb: "FF333333" } };
+    contactCell.alignment = { horizontal: "center", vertical: "middle" };
+    contactCell.fill = headerBg;
+
+    // Row 4 – GSTIN
+    worksheet.mergeCells("A4:D4");
+    const gstCell = worksheet.getCell("A4");
+    gstCell.value = "GSTIN: 09AABTB2201M1ZZ";
+    gstCell.font = { size: 10, color: { argb: "FF333333" } };
+    gstCell.alignment = { horizontal: "center", vertical: "middle" };
+    gstCell.fill = headerBg;
+
+    // Row 5 – Report title
+    worksheet.mergeCells("A5:D5");
+    const titleCell = worksheet.getCell("A5");
+    titleCell.value = `REVENUE REPORT  (${dateFrom}  to  ${dateTo})`;
+    titleCell.font = { bold: true, size: 13, color: { argb: "FFFF6600" } };
     titleCell.alignment = { horizontal: "center", vertical: "middle" };
+    titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF4E6" } };
+    worksheet.getRow(5).height = 22;
 
-    // Add header row
-    const headerRow = worksheet.addRow(["S.NO", "Source of Income", "No. Of Count", "Amount (₹)"]);
-    
-    // Add data rows - ✅ Use rounded display values
-    worksheet.addRow(["1", "Consultation Fees", consultationCount, displayValues.consultationSum]);
-    worksheet.addRow(["2", "Medicine Sales", medicineCount, displayValues.medicineSum]);
-    worksheet.addRow(["3", "Panchakarma Treatments", therapyCount, displayValues.therapySum]);
-    worksheet.addRow(["4", "Prakriti Parikshans", prakritiCount, displayValues.otherServicesSum]);
-    worksheet.addRow(["", "Total Revenue", "", displayValues.totalRevenue]);
+    // Row 6 – blank spacer
+    worksheet.getRow(6).height = 6;
 
-    // Style header row
-    headerRow.eachCell((cell) => {
-      cell.font = { bold: true };
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFCCE5FF" } };
-      cell.alignment = { horizontal: "center", vertical: "middle" };
-      cell.border = {
-        top: { style: "thin" },
-        bottom: { style: "thin" },
-        left: { style: "thin" },
-        right: { style: "thin" },
+    // Row 7 – Column headers
+    const colHeaderRow = worksheet.getRow(7);
+    colHeaderRow.values = ["S.NO", "Source of Income", "No. Of Count", "Amount (₹)"];
+    colHeaderRow.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+    colHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+    colHeaderRow.height = 25;
+    for (let c = 1; c <= 4; c++) {
+      colHeaderRow.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF6600" } };
+      colHeaderRow.getCell(c).border = {
+        top: { style: "thin" }, bottom: { style: "thin" },
+        left: { style: "thin" }, right: { style: "thin" },
       };
-    });
+    }
 
-    // Add borders to all data rows
-    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      if (rowNumber > 2) {
-        row.eachCell((cell) => {
-          cell.border = {
-            top: { style: "thin" },
-            bottom: { style: "thin" },
-            left: { style: "thin" },
-            right: { style: "thin" },
-          };
-          if (cell.col === 3 || cell.col === 4) {
-            cell.alignment = { horizontal: "center" };
-          }
-        });
+    // Rows 8–12 – Data
+    const dataRows = [
+      ["1", "Consultation Fees",      consultationCount, displayValues.consultationSum],
+      ["2", "Medicine Sales",         medicineCount,     displayValues.medicineSum],
+      ["3", "Panchakarma Treatments", therapyCount,      displayValues.therapySum],
+      ["4", "Prakriti Parikshans",    prakritiCount,     displayValues.otherServicesSum],
+      ["",  "Total Revenue",          "",                displayValues.totalRevenue],
+    ];
+
+    dataRows.forEach((rowData, idx) => {
+      const row = worksheet.addRow(rowData);
+      const isTotal = idx === dataRows.length - 1;
+      row.font = isTotal ? { bold: true, size: 11, color: { argb: "FFFF6600" } } : { size: 11 };
+      row.alignment = { horizontal: "center", vertical: "middle" };
+      row.height = 20;
+      for (let c = 1; c <= 4; c++) {
+        const cell = row.getCell(c);
+        cell.border = {
+          top: { style: "thin" }, bottom: { style: isTotal ? "medium" : "thin" },
+          left: { style: "thin" }, right: { style: "thin" },
+        };
+        if (isTotal) {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFE0B2" } };
+        } else {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 0 ? "FFFFFFFF" : "FFFFF4E6" } };
+        }
       }
-    });
-
-    // Bold the total row
-    const totalRow = worksheet.lastRow;
-    totalRow.eachCell((cell) => {
-      cell.font = { bold: true };
     });
 
     const buffer = await workbook.xlsx.writeBuffer();
