@@ -208,6 +208,55 @@ const generatePurchaseReport = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Purchase Records');
 
+    // -------------------- Clinic Header --------------------
+    const headerBg = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF8F0' } };
+
+    // Row 1 – Clinic Name
+    worksheet.mergeCells('A1:O1');
+    const clinicNameCell = worksheet.getCell('A1');
+    clinicNameCell.value = 'Bhartiya Dharohar';
+    clinicNameCell.font = { bold: true, size: 16, color: { argb: 'FF8B1A00' } };
+    clinicNameCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    clinicNameCell.fill = headerBg;
+    worksheet.getRow(1).height = 28;
+
+    // Row 2 – Address
+    worksheet.mergeCells('A2:O2');
+    const addrCell = worksheet.getCell('A2');
+    addrCell.value = 'D-76, Ground Floor, SECTOR 51, NOIDA';
+    addrCell.font = { size: 11, color: { argb: 'FF333333' } };
+    addrCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    addrCell.fill = headerBg;
+
+    // Row 3 – Phone & Email
+    worksheet.mergeCells('A3:O3');
+    const contactCell = worksheet.getCell('A3');
+    contactCell.value = 'Phone: 0120-4026100, 9625963298 | Email: bhartiyadharohar@gmail.com';
+    contactCell.font = { size: 10, color: { argb: 'FF333333' } };
+    contactCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    contactCell.fill = headerBg;
+
+    // Row 4 – GSTIN
+    worksheet.mergeCells('A4:O4');
+    const gstCell = worksheet.getCell('A4');
+    gstCell.value = 'GSTIN: 09AABTB2201M1ZZ';
+    gstCell.font = { size: 10, color: { argb: 'FF333333' } };
+    gstCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    gstCell.fill = headerBg;
+
+    // Row 5 – Report Title
+    worksheet.mergeCells('A5:O5');
+    const titleCell = worksheet.getCell('A5');
+    titleCell.value = 'PURCHASE REPORT';
+    titleCell.font = { bold: true, size: 13, color: { argb: 'FFFF6600' } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF4E6' } };
+    worksheet.getRow(5).height = 22;
+
+    // Row 6 – blank separator
+    worksheet.getRow(6).height = 6;
+
+    // -------------------- Column widths --------------------
     // Set column widths
     worksheet.columns = [
       { key: 'billingDate', width: 12 },
@@ -227,37 +276,23 @@ const generatePurchaseReport = async (req, res) => {
       { key: 'landingValue', width: 22 },
     ];
 
-    // Add main header row
-    const headerRow = worksheet.addRow([
-      'Date',
-      'Invoice No.',
-      'Supplier Name',
-      'Contact',
-      'Medicine Name',
-      'Batch No.',
-      'HSN',
-      'Expiry',
-      'Qty',
-      'Price/Unit(₹)',
-      'Total Price(₹)',
-      'Disc %',
-      'Value After Discount(₹)',
-      'GST Value (₹)',
-      'Landing Value Without GST'
-    ]);
-
-    // Style header
-    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
-    headerRow.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFFF6600' }
-    };
-    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
-    headerRow.height = 25;
+    // -------------------- Column header row (Row 7) --------------------
+    const colHeaderRow = worksheet.getRow(7);
+    colHeaderRow.values = [
+      'Date', 'Invoice No.', 'Supplier Name', 'Contact',
+      'Medicine Name', 'Batch No.', 'HSN', 'Expiry',
+      'Qty', 'Price/Unit(₹)', 'Total Price(₹)', 'Disc %',
+      'Value After Discount(₹)', 'GST Value (₹)', 'Landing Value Without GST'
+    ];
+    colHeaderRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    colHeaderRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    colHeaderRow.height = 25;
+    for (let c = 1; c <= 15; c++) {
+      colHeaderRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF6600' } };
+    }
 
     // Add data rows with medicine details
-    let currentRowNumber = 2;
+    let currentRowNumber = 8;
     let grandTotalPrice = 0;
     let grandTotalVAD = 0;
     let grandTotalLanding = 0;
@@ -333,15 +368,15 @@ const generatePurchaseReport = async (req, res) => {
           row.alignment = { horizontal: 'center', vertical: 'middle' };
           row.height = 20;
 
-          // Add borders
-          row.eachCell((cell) => {
-            cell.border = {
+          // Add borders - limit to 15 columns only
+          for (let c = 1; c <= 15; c++) {
+            row.getCell(c).border = {
               top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
               left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
               bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
               right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
             };
-          });
+          }
 
           // Accumulate per-invoice totals
           invTotalPrice += totalPriceVal;
@@ -379,19 +414,14 @@ const generatePurchaseReport = async (req, res) => {
       });
 
       subtotalRow.font = { bold: true };
-      subtotalRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFFFF4E6' }
-      };
       subtotalRow.alignment = { horizontal: 'right', vertical: 'middle' };
-      
-      subtotalRow.eachCell((cell) => {
-        cell.border = {
+      for (let c = 1; c <= 15; c++) {
+        subtotalRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF4E6' } };
+        subtotalRow.getCell(c).border = {
           top: { style: 'medium', color: { argb: 'FFFF6600' } },
           bottom: { style: 'medium', color: { argb: 'FFFF6600' } }
         };
-      });
+      }
 
       currentRowNumber++;
 
@@ -430,18 +460,18 @@ const generatePurchaseReport = async (req, res) => {
     worksheet.mergeCells(`A${currentRowNumber + 2}:B${currentRowNumber + 2}`);
     worksheet.mergeCells(`C${currentRowNumber + 2}:H${currentRowNumber + 2}`);
 
-    // Style grand total row
-    grandTotalRow.eachCell((cell) => {
-      cell.border = {
+    // Style grand total row - limit to 15 columns only
+    for (let c = 1; c <= 15; c++) {
+      grandTotalRow.getCell(c).border = {
         top: { style: 'double', color: { argb: 'FFFF6600' } },
         bottom: { style: 'double', color: { argb: 'FFFF6600' } }
       };
-      cell.fill = {
+      grandTotalRow.getCell(c).fill = {
         type: 'pattern',
         pattern: 'solid',
         fgColor: { argb: 'FFFFE0B2' }
       };
-    });
+    }
 
     // Generate buffer and send
     const buffer = await workbook.xlsx.writeBuffer();
