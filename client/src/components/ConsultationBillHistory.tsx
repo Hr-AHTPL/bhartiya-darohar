@@ -88,9 +88,24 @@ export default function ConsultationBillHistory({
       if (!response.ok) throw new Error("Failed to fetch consultation bills");
       const data = await response.json();
       if (data.success) {
-        setBills(data.bills);
-        setFilteredBills(data.bills);
-      } else {
+  const sorted = [...data.bills].sort((a, b) => {
+    const parseKey = (billNum: string) => {
+      if (!billNum) return { fy: 0, num: 0 };
+      const parts = billNum.split('/');
+      // parts: ['BD', '2026-27', 'C', '0083']
+      const fyYear = parseInt(parts[1]?.split('-')[0] || '0', 10); // 2026
+      const num = parseInt(parts[3] || '0', 10);                   // 83
+      return { fy: fyYear, num };
+    };
+    const ka = parseKey(a.billNumber);
+    const kb = parseKey(b.billNumber);
+    // Sort by FY first, then by number — both descending (newest first)
+    if (kb.fy !== ka.fy) return kb.fy - ka.fy;
+    return kb.num - ka.num;
+  });
+  setBills(sorted);
+  setFilteredBills(sorted);
+} else {
         throw new Error(data.message || "Unknown error");
       }
     } catch (err: any) {
