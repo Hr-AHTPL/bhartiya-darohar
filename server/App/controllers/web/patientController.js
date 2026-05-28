@@ -4591,7 +4591,7 @@ const getConsultationBills = async (req, res) => {
         ],
       })
       .populate("patientId", "firstName lastName idno phone age gender")
-      .sort({ createdAt: -1 });
+      .sort({ consultationBillNumber: -1 });
 
     const bills = visits.map((visit) => {
       const patient = visit.patientId;
